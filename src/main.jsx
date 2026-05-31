@@ -11,6 +11,7 @@ import {
   jdnJulian, wdayJulian, isJulianDate, isGapDate, rangeHasLeapYear,
 } from './lib/calendar.js'
 import { MONTH, DAY, fmtYear, fmt, fmtPartial, numericFormatOf } from './lib/format.js'
+import { computeMethodSummary } from './lib/method.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -68,16 +69,9 @@ const ReactDOM = { createRoot, createPortal }
     // MODE_LABELS drives the header mode CustomSelect (the customSelect dropdown
     // that replaced the native <select>). Order here = order shown in the dropdown.
     const MODE_LABELS=[{value:'classic',label:'Classic'},{value:'aox',label:'AoX'},{value:'deduction',label:'Deduction'},{value:'flash',label:'Flash'},{value:'blitz',label:'Blitz'},{value:'lookup',label:'Lookup'},{value:'guide',label:'How to Play'}];
-    // Month codes use canonical (-3 to 3) representation matching ab/cd convention.
-    // Values >3 are written as their negative equivalent (mod 7): 4→-3, 5→-2, 6→-1.
-    // Calculation is unaffected since results mod 7 at the end. Display values match
-    // what users learn from the book.
-    const METHOD_MONTH_CODES={1:-1,2:2,3:2,4:-2,5:0,6:3,7:-2,8:1,9:-3,10:-1,11:2,12:-3};
-    const METHOD_AB_ADVANCED_MAP={even:new Map([[0,0],[1,-2],[2,3],[3,1],[4,0],[5,-2],[6,3],[7,1],[8,0],[9,-2]]),odd:new Map([[0,3],[1,1],[2,0],[3,-2],[4,3],[5,1],[6,0],[7,-2],[8,3],[9,1]])};
-    const METHOD_CD_ADVANCED_LEAP_MAP=new Map([[0,0],[4,-2],[8,3],[12,1],[16,-1],[20,-3],[24,2],[28,0],[32,-2],[36,3],[40,1],[44,-1],[48,-3],[52,2],[56,0],[60,-2],[64,3],[68,1],[72,-1],[76,-3],[80,2],[84,0],[88,-2],[92,3],[96,1]]);
-    // ORDER is derived from MAP.keys() so the two stay in lockstep — single source of truth.
-    const METHOD_CD_ADVANCED_LEAP_ORDER=[...METHOD_CD_ADVANCED_LEAP_MAP.keys()];
-    const METHOD_CD_ADVANCED_ZERO_YEARS=new Set([0,6,17,23,28,34,45,51,56,62,73,79,84,90]);
+    // Method-code maps + the per-date code summary (METHOD_*, JULIAN_AB_MAP, normalizeMod7,
+    // canonicalizeMod, calcDayCode, calcCdCode, yearParts, computeMethodSummary) → src/lib/method.js,
+    // imported at top. (computeMethodSummary is the only one used here; the rest are its internals.)
     // Deduction option-count constants. YEAR_OPTION_DEFAULT (5) is the universal max for
     // distinct-codes Year windows in normal Gregorian/Julian play (N=6+ collides).
     // YEAR_OPTION_JUL_CROSS (2) applies when a Year window straddles Oct 15, 1582 — the +5 weekday
@@ -219,17 +213,6 @@ const ReactDOM = { createRoot, createPortal }
     // these same module-scope versions.
     const FORMAT_IDS=['written-mdy','written-dmy','numeric-mdy','numeric-dmy','numeric-ymd'];
     const rollFormat=()=>FORMAT_IDS[Math.floor(Math.random()*FORMAT_IDS.length)];
-    const normalizeMod7=v=>((v%7)+7)%7;
-    const canonicalizeMod=v=>{const m=normalizeMod7(v);return m>3?m-7:m;};
-    function calcDayCode(d){const lo=Math.floor(d/7)*7,hi=lo+7,fl=d-lo,fu=d-hi;return Math.abs(fu)<=Math.abs(fl)?fu:fl;}
-    function calcCdCode(cd){if(METHOD_CD_ADVANCED_ZERO_YEARS.has(cd))return 0;let b=METHOD_CD_ADVANCED_LEAP_ORDER[0];for(const y of METHOD_CD_ADVANCED_LEAP_ORDER){if(y>cd)break;b=y;}return canonicalizeMod((METHOD_CD_ADVANCED_LEAP_MAP.get(b)??0)+(cd-b));}
-    function yearParts(y){const f=((y%10000)+10000)%10000;return{a:Math.floor(f/1000),b:Math.floor((f%1000)/100),cd:f%100};}
-    // leapCode is the calculation contribution for leap correction (matches the
-    // framing of the other numeric codes in the codes panel): -1 only when it's
-    // a leap year AND month is January or February (where the leap correction
-    // applies in the day-of-week calculation), 0 otherwise. leapYear boolean is
-    // kept in the return object too in case future code needs the underlying state.
-    function computeMethodSummary({y,m,d},useJulian=false){if(!Number.isFinite(y)||y<=0)return null;const mc=METHOD_MONTH_CODES[m]??null;if(mc==null)return null;const p=yearParts(y);const julian=useJulian&&isJulianDate(y,m,d);const abCode=julian?(JULIAN_AB_MAP.get(p.a*10+p.b)??0):((p.a%2===0?METHOD_AB_ADVANCED_MAP.even:METHOD_AB_ADVANCED_MAP.odd).get(p.b)??0);const leapYear=julian?isLeapJulian(y):isLeap(y);const leapCode=(leapYear&&(m===1||m===2))?-1:0;const weekday=DAY[julian?wdayJulian(y,m,d):wday(y,m,d)];return{monthCode:mc,dayCode:calcDayCode(d),abCode,cdCode:calcCdCode(p.cd),leapYear,leapCode,weekday,calendarSystem:julian?'Julian':'Gregorian'};}
     const isTouch=typeof window!=="undefined"&&("ontouchstart" in window||navigator.maxTouchPoints>0||matchMedia("(pointer:coarse)").matches);
     const isTimer=m=>m==="blitz"||m==="flash";
     const fmtBlitzT=s=>{const sec=Math.ceil(s);if(sec<60)return sec+"s";const m=Math.floor(sec/60),r=sec%60;return m+"m "+r+"s";};
@@ -254,7 +237,6 @@ const ReactDOM = { createRoot, createPortal }
     const calcMed=t=>{if(!t.length)return null;const s=[...t].sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;};
     const blockMinus=e=>{if(e.key==="-"||e.key==="Subtract"||e.key==="Minus")e.preventDefault();};
     const blockMinusBI=e=>{if(e.data&&e.data.includes("-"))e.preventDefault();};
-    const JULIAN_AB_MAP=new Map([[0,-2],[1,-3],[2,3],[3,2],[4,1],[5,0],[6,-1],[7,-2],[8,-3],[9,3],[10,2],[11,1],[12,0],[13,-1],[14,-2],[15,-3]]);
 
     // Returns an entry's btns augmented with a synthesized green on the correct
     // answer when the entry has a wrong but no correct. Also downgrades any
@@ -355,7 +337,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-31T08:00:00Z');
+    const DEPLOY_TS=new Date('2026-05-31T16:56:00Z');
 
     function StatPanel({stats,armedSpan}){
       // For fractional values (Score, Streak as "X/Y"), shrink the value font
