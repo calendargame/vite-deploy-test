@@ -10,6 +10,7 @@ import {
   toAstro, isLeap, isLeapJulian, dim, jdnGregorian, wday,
   jdnJulian, wdayJulian, isJulianDate, isGapDate, rangeHasLeapYear,
 } from './lib/calendar.js'
+import { MONTH, DAY, fmtYear, fmt, fmtPartial, numericFormatOf } from './lib/format.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -63,8 +64,7 @@ const ReactDOM = { createRoot, createPortal }
     // buttonStateClass directly in each render keeps the layout flexible while still
     // sharing the state-class derivation. If a site ever needs the full wrapper,
     // factor it back in here.
-    const MONTH=["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const DAY=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    // MONTH / DAY name tables → src/lib/format.js, imported at top.
     // MODE_LABELS drives the header mode CustomSelect (the customSelect dropdown
     // that replaced the native <select>). Order here = order shown in the dropdown.
     const MODE_LABELS=[{value:'classic',label:'Classic'},{value:'aox',label:'AoX'},{value:'deduction',label:'Deduction'},{value:'flash',label:'Flash'},{value:'blitz',label:'Blitz'},{value:'lookup',label:'Lookup'},{value:'guide',label:'How to Play'}];
@@ -137,52 +137,7 @@ const ReactDOM = { createRoot, createPortal }
       {label:"Sep",months:[9]},              // sum 5
     ];
     // Day-of-week & calendar math (toAstro, isLeap, dim, jdn*, wday*, isJulian*, isGap*, rangeHasLeapYear) → src/lib/calendar.js, imported at top.
-    const fmtYear=y=>y>0?String(y):`${Math.abs(y)} BC`;
-    // fmt: takes a single format ID. The 5 reachable formats:
-    //   written-mdy  → April 27, 1828
-    //   written-dmy  → 27 April 1828
-    //   numeric-mdy  → 4/27/1828
-    //   numeric-dmy  → 27.4.1828
-    //   numeric-ymd  → 1828-4-27
-    // Convention: numeric MDY uses /, DMY uses ., YMD uses -. Year always full, no leading zeros, no ordinals.
-    const fmt=(y,m,d,formatId='written-mdy')=>{
-      const yr=fmtYear(y);
-      switch(formatId){
-        case'written-dmy':return`${d} ${MONTH[m-1]} ${yr}`;
-        case'numeric-mdy':return`${m}/${d}/${yr}`;
-        case'numeric-dmy':return`${d}.${m}.${yr}`;
-        case'numeric-ymd':return`${yr}-${m}-${d}`;
-        case'written-mdy':
-        default:return`${MONTH[m-1]} ${d}, ${yr}`;
-      }
-    };
-    // Partial-date display for Deduction. `missing` is one of 'day' | 'month'
-    // | 'year' and substitutes a fixed-width 2-underscore placeholder for that
-    // piece while honoring the active formatId for the rest. The placeholder
-    // is uniform across all pieces and formats — the sub-mode label already
-    // tells the user what's missing, so a short uniform marker reads fastest.
-    const fmtPartial=(y,m,d,formatId,missing)=>{
-      const PH='__';
-      const dPart=missing==='day'?PH:String(d);
-      const mNamePart=missing==='month'?PH:MONTH[m-1];
-      const mNumPart=missing==='month'?PH:String(m);
-      const yPart=missing==='year'?PH:fmtYear(y);
-      switch(formatId){
-        case'written-dmy':return`${dPart} ${mNamePart} ${yPart}`;
-        case'numeric-mdy':return`${mNumPart}/${dPart}/${yPart}`;
-        case'numeric-dmy':return`${dPart}.${mNumPart}.${yPart}`;
-        case'numeric-ymd':return`${yPart}-${mNumPart}-${dPart}`;
-        case'written-mdy':
-        default:return`${mNamePart} ${dPart}, ${yPart}`;
-      }
-    };
-    // Helper: maps any format ID to its corresponding numeric format ID.
-    // Used by Lookup input parsing and DEPLOY_TS (which always render numeric).
-    const numericFormatOf=fid=>{
-      if(fid==='written-mdy'||fid==='numeric-mdy')return'numeric-mdy';
-      if(fid==='written-dmy'||fid==='numeric-dmy')return'numeric-dmy';
-      return'numeric-ymd';
-    };
+    // Date formatting (fmtYear, fmt, fmtPartial, numericFormatOf) → src/lib/format.js, imported at top.
     const rint=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
     function randomDate(lo,hi,julian=false,leapChance='random',janFebChance='random',julianChance='random'){
       // Decide leap-year preference based on leapChance setting
@@ -400,7 +355,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-31T06:47:00Z');
+    const DEPLOY_TS=new Date('2026-05-31T08:00:00Z');
 
     function StatPanel({stats,armedSpan}){
       // For fractional values (Score, Streak as "X/Y"), shrink the value font
