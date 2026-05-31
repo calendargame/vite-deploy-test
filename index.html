@@ -1,13 +1,171 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>claude</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <meta name="theme-color" content="#0d1117">
+  <title>Calendar Game</title>
+  <meta name="application-name" content="Calendar Game">
+  <meta name="apple-mobile-web-app-title" content="Calendar Game">
+  <script>(function(){var d=window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.setAttribute('data-theme',d?'dusk':'light');document.addEventListener('gesturestart',function(e){e.preventDefault();});})();</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root{--bg1:#0b0714;--bg2:#0b0714;--card-bg:rgba(26,15,43,.98);--card-bd:rgba(120,53,175,.45);--panel-bg:rgba(88,28,135,.25);--panel-bd:rgba(120,53,175,.45);--thin-bd:rgba(120,53,175,.35);--sbtn-bg:rgba(88,28,135,.32);--sbtn-bd:rgba(120,53,175,.52);--sbtn-hov:rgba(88,28,135,.48);--stgl-bg:rgba(88,28,135,.24);--stgl-hov:rgba(88,28,135,.4);--chip-bg:rgba(120,53,175,.25);--chip-bd:rgba(120,53,175,.45);--bar-bg:rgba(120,53,175,.25);--bar-bd:rgba(120,53,175,.45);--body-color:#f5f3ff;--sec-color:rgba(237,233,254,.8);--mut-color:rgba(216,180,254,.7);--fnt-color:rgba(196,181,254,.6);--tc:#0b0714;--shadow-elev:rgba(0,0,0,.5)}
+    [data-theme="dusk"]{--bg1:#0d1117;--bg2:#0d1117;--tc:#0d1117;--card-bg:rgba(13,17,23,.97);--card-bd:rgba(99,102,241,.4);--panel-bg:rgba(28,38,68,.35);--panel-bd:rgba(99,102,241,.4);--thin-bd:rgba(99,102,241,.3);--sbtn-bg:rgba(38,48,88,.38);--sbtn-bd:rgba(99,102,241,.5);--sbtn-hov:rgba(38,48,88,.55);--stgl-bg:rgba(28,38,68,.28);--stgl-hov:rgba(28,38,68,.45);--chip-bg:rgba(99,102,241,.2);--chip-bd:rgba(99,102,241,.4);--bar-bg:rgba(99,102,241,.2);--bar-bd:rgba(99,102,241,.4);--shadow-elev:rgba(0,0,0,.5)}
+    [data-theme="midnight"]{--bg1:#000;--bg2:#000;--tc:#000;--card-bg:rgba(4,0,12,.93);--card-bd:rgba(139,92,246,.5);--panel-bg:rgba(45,0,90,.28);--panel-bd:rgba(139,92,246,.5);--thin-bd:rgba(139,92,246,.38);--sbtn-bg:rgba(55,0,110,.35);--sbtn-bd:rgba(139,92,246,.55);--sbtn-hov:rgba(55,0,110,.5);--stgl-bg:rgba(45,0,90,.25);--stgl-hov:rgba(45,0,90,.42);--chip-bg:rgba(139,92,246,.2);--chip-bd:rgba(139,92,246,.45);--bar-bg:rgba(139,92,246,.2);--bar-bd:rgba(139,92,246,.45);--shadow-elev:rgba(139,92,246,.18)}
+    [data-theme="nebula"]{--bg1:#0b0714;--bg2:#0b0714;--tc:#0b0714}
+    [data-theme="parchment"]{--bg1:#f0e8d5;--bg2:#f0e8d5;--tc:#f0e8d5;--card-bg:rgba(255,252,244,.95);--card-bd:rgba(120,53,175,.22);--panel-bg:rgba(120,53,175,.07);--panel-bd:rgba(120,53,175,.22);--thin-bd:rgba(120,53,175,.18);--sbtn-bg:rgba(120,53,175,.1);--sbtn-bd:rgba(120,53,175,.28);--sbtn-hov:rgba(120,53,175,.18);--stgl-bg:rgba(120,53,175,.07);--stgl-hov:rgba(120,53,175,.14);--chip-bg:rgba(120,53,175,.09);--chip-bd:rgba(120,53,175,.22);--bar-bg:rgba(120,53,175,.09);--bar-bd:rgba(120,53,175,.22);--body-color:#2e1065;--sec-color:rgba(46,16,101,.78);--mut-color:rgba(46,16,101,.62);--fnt-color:rgba(46,16,101,.5);--shadow-elev:rgba(46,16,101,.18)}
+    [data-theme="light"]{--bg1:#f2f2f7;--bg2:#f2f2f7;--tc:#f2f2f7;--card-bg:rgba(255,255,255,.95);--card-bd:rgba(120,53,175,.22);--panel-bg:rgba(237,233,254,.48);--panel-bd:rgba(120,53,175,.22);--thin-bd:rgba(120,53,175,.18);--sbtn-bg:rgba(237,233,254,.65);--sbtn-bd:rgba(120,53,175,.28);--sbtn-hov:rgba(237,233,254,.88);--stgl-bg:rgba(237,233,254,.42);--stgl-hov:rgba(237,233,254,.65);--chip-bg:rgba(237,233,254,.75);--chip-bd:rgba(120,53,175,.22);--bar-bg:rgba(237,233,254,.75);--bar-bd:rgba(120,53,175,.22);--body-color:#1e1b4b;--sec-color:rgba(30,27,75,.78);--mut-color:rgba(30,27,75,.62);--fnt-color:rgba(30,27,75,.5);--shadow-elev:rgba(30,27,75,.15)}
+    /* Layout architecture: body never scrolls (body+html have overflow:hidden and
+       overscroll-behavior:none — no rubber-band on locked body). Three structural
+       pieces inside #root:
+         1. .htp-sticky-bar: position:fixed at the top of the viewport. NOT a flex
+            child or part of normal flow — it's a chrome-style fixed element above
+            everything. Has its own bg-[var(--bg1)]. ResizeObserver in JS measures
+            the bar's offsetHeight on mount and any resize, writes the value to the
+            --bar-h CSS custom property on the document root.
+         2. #appScroll (the scroll container, ref={appScrollRef}): position:absolute
+            inset:0, with padding-top:var(--bar-h) so its content starts below the
+            bar instead of being covered by it. overflow-y:auto with
+            overscroll-contain keeps rubber-band bounce LOCAL — the bounce happens
+            inside this container and cannot affect the fixed bar above.
+         3. Inner scrollables (settings popover inner, Lookup history): also use
+            overscroll-contain for the same reason.
+       Why the bar is position:fixed (not sticky or a flex item): iOS PWA samples
+       the status bar color from the topmost fixed/sticky element with its own
+       background. The bar being explicitly position:fixed with bg-[var(--bg1)]
+       (a theme-aware CSS variable) means iOS re-samples the bar's bg whenever the
+       theme changes, so the status bar / URL bar tinting updates live. A plain
+       flex child without explicit positioning does NOT give iOS this cue, so it
+       falls back to the theme-color meta tag, which iOS PWA reads only at launch
+       and never updates on JS changes. */
+    html,body{overflow:hidden;overscroll-behavior:none}
+    html{touch-action:manipulation}
+    body{background:var(--bg1);color:var(--body-color)}
+    #root{position:fixed;top:0;left:0;right:0;bottom:0;overflow:hidden}
+    /* Disable text selection globally to prevent accidental selection during rapid
+       practice taps (long-press-and-drag, double-tap, etc.). Two specific opt-ins:
+       input/textarea elements (so typing/editing stays functional everywhere they
+       appear), and any element explicitly tagged with the Tailwind `select-text`
+       utility (currently the contact email anchor, so users can long-press to copy
+       it). If more allow-list spots are added later, give them `select-text`. */
+    body{user-select:none;-webkit-user-select:none}
+    input,textarea{user-select:text;-webkit-user-select:text}
+    .select-text{user-select:text;-webkit-user-select:text}
+    /* Scroll-edge indicator system. Two visual languages, designed to stack:
+       FADE = "content extends past this edge." Implemented as a CSS mask on the
+         scroll container itself. Applied conditionally (state-driven) so it only
+         appears when content actually overflows past that edge. Top and bottom
+         variants are symmetric (24px each).
+       SHADOW (elev-shadow-down/up) = "fixed UI sits at this boundary, content
+         slides under it." Applied to the fixed element (bar, sticky footer,
+         layered section header), not to the scroll container. Cast away from the
+         scroll content.
+       Where both apply (e.g., bar at scroll's top edge), both stack: shadow says
+       "I'm a layered surface," fade says "and there's content extending under me." */
+    .fade-scroll-top{-webkit-mask-image:linear-gradient(to bottom,transparent,black 24px);mask-image:linear-gradient(to bottom,transparent,black 24px)}
+    .fade-scroll-bottom{-webkit-mask-image:linear-gradient(to bottom,black calc(100% - 24px),transparent);mask-image:linear-gradient(to bottom,black calc(100% - 24px),transparent)}
+    /* When a container has BOTH top and bottom fades, the two mask-images must be
+       combined into a single rule so neither overrides the other (CSS doesn't stack
+       mask-image declarations from separate classes). The combined gradient fades
+       both edges at once. */
+    .fade-scroll-both{-webkit-mask-image:linear-gradient(to bottom,transparent,black 24px,black calc(100% - 24px),transparent);mask-image:linear-gradient(to bottom,transparent,black 24px,black calc(100% - 24px),transparent)}
+    .elev-shadow-down{box-shadow:0 4px 6px -2px var(--shadow-elev)}
+    .elev-shadow-up{box-shadow:0 -4px 6px -2px var(--shadow-elev)}
+    /* Smooth shadow fade in/out. Selectors target the elements that conditionally
+       receive .elev-shadow-down/.elev-shadow-up so the transition is on a STABLE rule
+       (always present), letting the box-shadow animate both when the class is added AND
+       when it's removed. Putting transition inside .elev-shadow-down would only animate
+       on add, since the rule no longer applies once the class is removed. */
+    .htp-sticky-bar,.popover-sticky-footer,.lookup-history-header,.lookup-method-section{transition:box-shadow 0.2s ease}
+    .card{background:var(--card-bg);border:1px solid var(--card-bd)}
+    .panel{background:var(--panel-bg);border:1px solid var(--panel-bd)}
+    .thin{border:1px solid var(--thin-bd)}
+    .surface-button{background:var(--sbtn-bg);border-color:var(--sbtn-bd);transition:background-color .2s}
+    .surface-toggle{background:var(--stgl-bg);border-color:var(--sbtn-bd);transition:background-color .2s}
+    .btn-solid{background:#7c3aed;color:#fff;transition:background-color .2s}
+    /* Hover styles guarded by hover-capable media query so touch devices (iOS, Android)
+       don't get sticky-hover residual highlights after a tap. Tailwind's own hover:
+       utilities already do this guard automatically; these custom rules now match. */
+    @media (hover: hover){
+      .surface-button:hover{background:var(--sbtn-hov)}
+      .surface-toggle:hover{background:var(--stgl-hov)}
+      .btn-solid:hover{background:#6d28d9}
+    }
+    .btn-solid[aria-disabled="true"],.btn-solid:disabled{opacity:.6;cursor:not-allowed}
+    button,input,select{-webkit-tap-highlight-color:transparent}
+    button{touch-action:manipulation}
+    button:focus,select:focus{outline:none}
+    /* Flash keyframes drive the visual layers that change during a flash:
+       background and border-color. If any layer is omitted, the button's other
+       CSS transitions will leak in and cause a 150ms fade on that property —
+       visible as flicker or a lingering border at flash start.
+       Endpoints (100%) match surface-button's resting state so the flash
+       resolves cleanly into idle without a second-stage transition.
+       Box-shadow halo intentionally absent for cleaner flat-design appearance;
+       persist classes match (no halo on correct/wrong persistent states). */
+    @keyframes flashGood{0%,60%{background:rgba(21,128,61,.95);border-color:transparent}100%{background:var(--sbtn-bg);border-color:var(--sbtn-bd)}}
+    @keyframes flashBad{0%,60%{background:rgba(185,28,28,.95);border-color:transparent}100%{background:var(--sbtn-bg);border-color:var(--sbtn-bd)}}
+    @keyframes flashGoodLight{0%,60%{background:rgba(22,163,74,.82);border-color:transparent}100%{background:var(--sbtn-bg);border-color:var(--sbtn-bd)}}
+    @keyframes flashBadLight{0%,60%{background:rgba(220,38,38,.82);border-color:transparent}100%{background:var(--sbtn-bg);border-color:var(--sbtn-bd)}}
+    .flash-good{animation:flashGood .55s ease-out forwards}
+    .flash-bad{animation:flashBad .55s ease-out forwards}
+    [data-theme="light"] .flash-good,[data-theme="parchment"] .flash-good{animation-name:flashGoodLight}
+    [data-theme="light"] .flash-bad,[data-theme="parchment"] .flash-bad{animation-name:flashBadLight}
+    .btn-wrong-persist{background:rgba(185,28,28,.95)}
+    .btn-wrong-dim{background:rgba(185,28,28,.32)}
+    .btn-correct-persist{background:rgba(21,128,61,.95)}
+    /* Diagonal-split background for stack entries that have been retroactively
+       overridden right→wrong (e.g., user got it correct, later flipped via Override on
+       a subsequent live unanswered question). Green-upper-left/red-lower-right tells the
+       time-flow story: originally correct (past, upper-left), now counted wrong (present,
+       lower-right). Hard 50%/50% color stops produce a sharp diagonal at ~30° from
+       vertical (linear-gradient axis at 120° from up = 30° past horizontal-right,
+       perpendicular dividing line tilts 30° from vertical with its top leaning right,
+       i.e. forward-slash direction). The 120° angle anchors green at the top-left
+       corner and red at the bottom-right corner, which is what produces the upper-left
+       / lower-right region split. Theme overrides below mirror the existing solid
+       persist-color values (light/parchment use the alpha-reduced variants).
+       background-origin: border-box makes the gradient compute its diagonal against
+       the same box it's displayed in (the visible button shape including the 1px
+       transparent border). Without it, the gradient computes against the slightly
+       smaller padding-box, leaving a visible 1px inset on each edge where the colors
+       don't quite reach the rounded outline. */
+    .btn-override-wrong{background:linear-gradient(120deg,rgba(21,128,61,.95) 50%,rgba(185,28,28,.95) 50%);background-origin:border-box}
+    [data-theme="light"] .btn-override-wrong,[data-theme="parchment"] .btn-override-wrong{background:linear-gradient(120deg,rgba(22,163,74,.82) 50%,rgba(220,38,38,.82) 50%);background-origin:border-box}
+    [data-theme="light"] .btn-wrong-persist,[data-theme="parchment"] .btn-wrong-persist{background:rgba(220,38,38,.82)}
+    [data-theme="light"] .btn-wrong-dim,[data-theme="parchment"] .btn-wrong-dim{background:rgba(220,38,38,.28)}
+    [data-theme="light"] .btn-correct-persist,[data-theme="parchment"] .btn-correct-persist{background:rgba(22,163,74,.82)}
+    /* Focus ring previously rendered via .focus-ring:focus-visible — removed
+       intentionally. With Tab bound exclusively to toggling the mode selector
+       dropdown (see App keydown handler), no other element is reachable via
+       keyboard focus, so a visible focus indicator on those elements is dead
+       weight. The .focus-ring class is left on element classNames as a no-op
+       so future re-enablement is a one-line CSS change rather than a sweep. */
+    .hist-unsel{border-left-color:var(--panel-bd)}
+    .bar{height:6px;border-radius:6px;overflow:hidden;background:var(--bar-bg);border:1px solid var(--bar-bd)}
+    .bar>span{display:block;height:100%;background:linear-gradient(90deg,#a855f7,#7c3aed)}
+    .expander{max-height:0;transition:max-height .28s ease-in-out;overflow:hidden;will-change:max-height}
+    [data-theme="parchment"] .text-purple-50,[data-theme="light"] .text-purple-50{color:var(--body-color)!important}
+    [data-theme="parchment"] .text-purple-100,[data-theme="light"] .text-purple-100{color:var(--sec-color)!important}
+    [data-theme="parchment"] .text-purple-100\/80,[data-theme="light"] .text-purple-100\/80,[data-theme="parchment"] .text-purple-100\/90,[data-theme="light"] .text-purple-100\/90,[data-theme="parchment"] .text-purple-100\/85,[data-theme="light"] .text-purple-100\/85{color:var(--sec-color)!important}
+    [data-theme="parchment"] .text-purple-200\/80,[data-theme="light"] .text-purple-200\/80,[data-theme="parchment"] .text-purple-200\/70,[data-theme="light"] .text-purple-200\/70,[data-theme="parchment"] .text-purple-200\/90,[data-theme="light"] .text-purple-200\/90,[data-theme="parchment"] .text-purple-300\/80,[data-theme="light"] .text-purple-300\/80{color:var(--mut-color)!important}
+    /* #8 — timestamp color: text-purple-300/60 now has light-theme overrides */
+    [data-theme="parchment"] .text-purple-300\/60,[data-theme="light"] .text-purple-300\/60,[data-theme="parchment"] .text-purple-300\/70,[data-theme="light"] .text-purple-300\/70{color:var(--fnt-color)!important}
+    [data-theme="parchment"] .text-white\/90,[data-theme="light"] .text-white\/90{color:var(--mut-color)!important}
+    [data-theme="parchment"] .bg-purple-500\/20,[data-theme="light"] .bg-purple-500\/20{background-color:rgba(120,53,175,.2)!important}
+    [data-theme="parchment"] .border-purple-500\/40,[data-theme="light"] .border-purple-500\/40{border-color:rgba(120,53,175,.3)!important}
+    [data-theme="parchment"] .border-purple-500\/20,[data-theme="light"] .border-purple-500\/20{border-color:rgba(120,53,175,.15)!important}
+    input[type="range"]{-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;border:none;outline:none;background:linear-gradient(to right,#a855f7 0%,#7c3aed var(--rng-fill,50%),var(--panel-bd) var(--rng-fill,50%));}
+    input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:14px;border-radius:7px;background:#fff;cursor:pointer;border:none;box-shadow:0 0.5px 4px rgba(0,0,0,.3);margin-top:-4.5px;}
+    input[type="range"]::-moz-range-thumb{width:22px;height:14px;border-radius:7px;background:#fff;cursor:pointer;border:none;box-shadow:0 0.5px 4px rgba(0,0,0,.3);}
+    input[type="range"]::-webkit-slider-runnable-track{height:5px;border-radius:3px;}
+    input[type="range"]::-moz-range-track{height:5px;border-radius:3px;background:transparent;}
+    input[type="range"]:disabled{opacity:.4;cursor:not-allowed;}
+  </style>
+</head>
+<body class="text-purple-50">
+  <div id="root" class="min-h-screen">Loading…</div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
 </html>

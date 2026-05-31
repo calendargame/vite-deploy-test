@@ -1,10 +1,4477 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.jsx'
+import * as React from 'react'
+import * as ReactDOM from 'react-dom/client'
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+    const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
+    // ─────────────────────────────────────────────────────────────────────────
+    // Date snapshot fields. Every generated date object carries these stamps
+    // so that back-browse and codes display always reflect the system that was
+    // active when the date was generated, not the current setting:
+    //   y, m, d   — year, month, day (1-indexed month)
+    //   _fmt      — date format ID at generation (e.g. 'written-mdy', 'numeric-dmy').
+    //               Random Format on → random roll per date; off → current dateFormat.
+    //               Display layer always trusts _fmt over the live dateFormat setting.
+    //   _jul      — useJulian boolean at generation. Used by codes panel + history
+    //               so revisiting a Julian-era date via Back keeps Julian highlights/
+    //               codes even if the user has since toggled Julian off.
+    // Deduction puzzles additionally carry: _abx (abCrossOnly), _julx (julCrossOnly),
+    // _m1582 (monthOnly1582) — informational snapshots of per-mode toggles at spawn.
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reset-style button shared className. Used by Reset Stats (Classic/Deduction/Flash),
+    // Round Reset (Blitz active), AoX Reset, Settings Reset.
+    const RESET_BTN_CLASS="px-3 py-2 rounded-xl bg-rose-600/90 text-white text-sm font-medium";
+    // Compact Reset Stats button variant (smaller py + col-span fit for stats panel).
+    const RESET_STATS_BTN_CLASS="w-full px-3 py-1.5 rounded-xl btn-solid border border-transparent text-sm font-medium";
+    // ★ "new best" star className — appears next to a stat value when a new best was set.
+    const NEW_BEST_STAR_CLASS="text-purple-400 font-bold ml-0.5 text-[8px]";
+    // Settings popover section label className (small uppercase tracking-widest).
+    const SECTION_LABEL_CLASS="text-[10px] uppercase tracking-widest text-purple-300/60";
+    // <kbd> styling used by the keyboard shortcut rows in HtP.
+    const KBD_CLASS="inline-block panel rounded px-1.5 py-0.5 text-[11px] font-mono min-w-[1.5rem] text-center shrink-0";
+    // Tiny presentational components for repeated patterns. Pure visual, no state.
+    const NewBestStar=()=>(<sup className={NEW_BEST_STAR_CLASS}>★</sup>);
+    const SectionLabel=({children,className=""})=>(<div className={`${SECTION_LABEL_CLASS}${className?" "+className:""}`}>{children}</div>);
+    const Kbd=({children})=>(<kbd className={KBD_CLASS}>{children}</kbd>);
+    // buttonStateClass — picks the className for an answer-grid button based on its
+    // persistent state (correct/wrong-latest/wrong-prev/override-wrong) and any active
+    // flash animation. Returns just the state-class portion; the caller composes the
+    // full className (base + state + lock/dim).
+    //   ps        — persistBtns[idx] value or undefined
+    //   isFlashing — whether a flash is active for this button index
+    //   flashGood — when flashing, whether it's a good or bad flash
+    //   idleClass — fallback for idle state (varies between AoX 'surface-button' and App's idleBtn)
+    const buttonStateClass=(ps,isFlashing,flashGood,idleClass)=>{
+      if(ps==='correct')return'btn-correct-persist border-transparent';
+      if(ps==='wrong-latest')return'btn-wrong-persist border-transparent';
+      if(ps==='wrong-prev')return'btn-wrong-dim border-transparent';
+      if(ps==='override-wrong')return'btn-override-wrong border-transparent';
+      if(isFlashing)return(flashGood?"flash-good":"flash-bad")+' border-transparent';
+      return idleClass;
+    };
+    // AnswerButton wrapper was considered but not used: each grid has site-specific
+    // baseBtn/extra-class shaping (col-span, py-2 text-sm, centerLastOpt) so calling
+    // buttonStateClass directly in each render keeps the layout flexible while still
+    // sharing the state-class derivation. If a site ever needs the full wrapper,
+    // factor it back in here.
+    const MONTH=["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const DAY=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    // MODE_LABELS drives the header mode CustomSelect (the customSelect dropdown
+    // that replaced the native <select>). Order here = order shown in the dropdown.
+    const MODE_LABELS=[{value:'classic',label:'Classic'},{value:'aox',label:'AoX'},{value:'deduction',label:'Deduction'},{value:'flash',label:'Flash'},{value:'blitz',label:'Blitz'},{value:'lookup',label:'Lookup'},{value:'guide',label:'How to Play'}];
+    // Month codes use canonical (-3 to 3) representation matching ab/cd convention.
+    // Values >3 are written as their negative equivalent (mod 7): 4→-3, 5→-2, 6→-1.
+    // Calculation is unaffected since results mod 7 at the end. Display values match
+    // what users learn from the book.
+    const METHOD_MONTH_CODES={1:-1,2:2,3:2,4:-2,5:0,6:3,7:-2,8:1,9:-3,10:-1,11:2,12:-3};
+    const METHOD_AB_ADVANCED_MAP={even:new Map([[0,0],[1,-2],[2,3],[3,1],[4,0],[5,-2],[6,3],[7,1],[8,0],[9,-2]]),odd:new Map([[0,3],[1,1],[2,0],[3,-2],[4,3],[5,1],[6,0],[7,-2],[8,3],[9,1]])};
+    const METHOD_CD_ADVANCED_LEAP_MAP=new Map([[0,0],[4,-2],[8,3],[12,1],[16,-1],[20,-3],[24,2],[28,0],[32,-2],[36,3],[40,1],[44,-1],[48,-3],[52,2],[56,0],[60,-2],[64,3],[68,1],[72,-1],[76,-3],[80,2],[84,0],[88,-2],[92,3],[96,1]]);
+    // ORDER is derived from MAP.keys() so the two stay in lockstep — single source of truth.
+    const METHOD_CD_ADVANCED_LEAP_ORDER=[...METHOD_CD_ADVANCED_LEAP_MAP.keys()];
+    const METHOD_CD_ADVANCED_ZERO_YEARS=new Set([0,6,17,23,28,34,45,51,56,62,73,79,84,90]);
+    // Deduction option-count constants. YEAR_OPTION_DEFAULT (5) is the universal max for
+    // distinct-codes Year windows in normal Gregorian/Julian play (N=6+ collides).
+    // YEAR_OPTION_JUL_CROSS (2) applies when a Year window straddles Oct 15, 1582 — the +5 weekday
+    // shift across that boundary collapses any longer window to duplicates. DAY_OPTION_COUNT (7) is
+    // the standard Day window; the Oct 1582 left-side {1-4} case uses the literal-4 window
+    // [1,2,3,4] inline since that's the only valid layout there (codes 1-4 repeat at days 15-18).
+    const YEAR_OPTION_DEFAULT=5,YEAR_OPTION_JUL_CROSS=2,DAY_OPTION_COUNT=7;
+    // Month deduction boxes — 7 fixed boxes grouping months by shared doomsday code
+    // Each box: {label:displayed text, months:[month numbers in that box]}
+    const MONTH_BOXES_COMMON=[
+      {label:"Jan/Oct",months:[1,10]},      // code 6
+      {label:"Feb/Mar/Nov",months:[2,3,11]},// code 2
+      {label:"Apr/Jul",months:[4,7]},       // code 5
+      {label:"May",months:[5]},             // code 0
+      {label:"Jun",months:[6]},             // code 3
+      {label:"Aug",months:[8]},             // code 1
+      {label:"Sep/Dec",months:[9,12]},      // code 4
+    ];
+    const MONTH_BOXES_LEAP=[
+      {label:"Oct",months:[10]},            // code 6
+      {label:"Mar/Nov",months:[3,11]},      // code 2
+      {label:"Jan/Apr/Jul",months:[1,4,7]}, // code 5
+      {label:"May",months:[5]},             // code 0
+      {label:"Jun",months:[6]},             // code 3
+      {label:"Feb/Aug",months:[2,8]},       // code 1
+      {label:"Sep/Dec",months:[9,12]},      // code 4
+    ];
+    // 1582-specific Month sub-mode box layouts (only used when useJulian=ON and yc=1582).
+    // 1582 has the Julian/Gregorian split: Jan-Sep + Oct1-4 use Julian (year code +1),
+    // Oct15+ + Nov + Dec use Gregorian (year code -2). The effective month code = month code + year code.
+    // Three day-ranges produce three layouts; only October's box position differs across them.
+    const MONTH_BOXES_1582_PRE=[ // Days 1-4 of any month: Oct uses Julian
+      {label:"Jan/Oct/Nov",months:[1,10,11]},// sum 0
+      {label:"Feb/Mar",months:[2,3]},        // sum 3
+      {label:"Apr/Jul",months:[4,7]},        // sum 6
+      {label:"May",months:[5]},              // sum 1
+      {label:"Jun",months:[6]},              // sum 4
+      {label:"Aug/Dec",months:[8,12]},       // sum 2
+      {label:"Sep",months:[9]},              // sum 5
+    ];
+    const MONTH_BOXES_1582_POST=[ // Days 15-31: Oct uses Gregorian (joins Jun)
+      {label:"Jan/Nov",months:[1,11]},       // sum 0
+      {label:"Feb/Mar",months:[2,3]},        // sum 3
+      {label:"Apr/Jul",months:[4,7]},        // sum 6
+      {label:"May",months:[5]},              // sum 1
+      {label:"Jun/Oct",months:[6,10]},       // sum 4
+      {label:"Aug/Dec",months:[8,12]},       // sum 2
+      {label:"Sep",months:[9]},              // sum 5
+    ];
+    const MONTH_BOXES_1582_GAP=[ // Days 5-14: Oct excluded entirely (gap days don't exist in Oct 1582)
+      {label:"Jan/Nov",months:[1,11]},       // sum 0
+      {label:"Feb/Mar",months:[2,3]},        // sum 3
+      {label:"Apr/Jul",months:[4,7]},        // sum 6
+      {label:"May",months:[5]},              // sum 1
+      {label:"Jun",months:[6]},              // sum 4
+      {label:"Aug/Dec",months:[8,12]},       // sum 2
+      {label:"Sep",months:[9]},              // sum 5
+    ];
+    const toAstro=y=>y>0?y:1-Math.abs(y);
+    const isLeap=y=>{y=toAstro(y);return y%400===0||(y%4===0&&y%100!==0);};
+    // dim — days-in-month. Optional julian param switches leap-year rule:
+    // off (default) uses Gregorian leap rule (isLeap); on uses Julian (every y%4===0).
+    // All non-Julian callers can omit the param and behavior is unchanged.
+    const dim=(y,m,julian=false)=>{
+      const leap=julian?isLeapJulian(y):isLeap(y);
+      return m===2?(leap?29:28):[4,6,9,11].includes(m)?30:31;
+    };
+    function jdnGregorian(y,m,d){const a=Math.floor((14-m)/12),y2=y+4800-a,m2=m-3+12*a;return d+Math.floor((153*m2+2)/5)+365*y2+Math.floor(y2/4)-Math.floor(y2/100)+Math.floor(y2/400)-32045;}
+    const wday=(y,m,d)=>((jdnGregorian(toAstro(y),m,d)+1)%7+7)%7;
+    const fmtYear=y=>y>0?String(y):`${Math.abs(y)} BC`;
+    // fmt: takes a single format ID. The 5 reachable formats:
+    //   written-mdy  → April 27, 1828
+    //   written-dmy  → 27 April 1828
+    //   numeric-mdy  → 4/27/1828
+    //   numeric-dmy  → 27.4.1828
+    //   numeric-ymd  → 1828-4-27
+    // Convention: numeric MDY uses /, DMY uses ., YMD uses -. Year always full, no leading zeros, no ordinals.
+    const fmt=(y,m,d,formatId='written-mdy')=>{
+      const yr=fmtYear(y);
+      switch(formatId){
+        case'written-dmy':return`${d} ${MONTH[m-1]} ${yr}`;
+        case'numeric-mdy':return`${m}/${d}/${yr}`;
+        case'numeric-dmy':return`${d}.${m}.${yr}`;
+        case'numeric-ymd':return`${yr}-${m}-${d}`;
+        case'written-mdy':
+        default:return`${MONTH[m-1]} ${d}, ${yr}`;
+      }
+    };
+    // Partial-date display for Deduction. `missing` is one of 'day' | 'month'
+    // | 'year' and substitutes a fixed-width 2-underscore placeholder for that
+    // piece while honoring the active formatId for the rest. The placeholder
+    // is uniform across all pieces and formats — the sub-mode label already
+    // tells the user what's missing, so a short uniform marker reads fastest.
+    const fmtPartial=(y,m,d,formatId,missing)=>{
+      const PH='__';
+      const dPart=missing==='day'?PH:String(d);
+      const mNamePart=missing==='month'?PH:MONTH[m-1];
+      const mNumPart=missing==='month'?PH:String(m);
+      const yPart=missing==='year'?PH:fmtYear(y);
+      switch(formatId){
+        case'written-dmy':return`${dPart} ${mNamePart} ${yPart}`;
+        case'numeric-mdy':return`${mNumPart}/${dPart}/${yPart}`;
+        case'numeric-dmy':return`${dPart}.${mNumPart}.${yPart}`;
+        case'numeric-ymd':return`${yPart}-${mNumPart}-${dPart}`;
+        case'written-mdy':
+        default:return`${mNamePart} ${dPart}, ${yPart}`;
+      }
+    };
+    // Helper: maps any format ID to its corresponding numeric format ID.
+    // Used by Lookup input parsing and DEPLOY_TS (which always render numeric).
+    const numericFormatOf=fid=>{
+      if(fid==='written-mdy'||fid==='numeric-mdy')return'numeric-mdy';
+      if(fid==='written-dmy'||fid==='numeric-dmy')return'numeric-dmy';
+      return'numeric-ymd';
+    };
+    const rint=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+    function randomDate(lo,hi,julian=false,leapChance='random',janFebChance='random',julianChance='random'){
+      // Decide leap-year preference based on leapChance setting
+      const r=Math.random();
+      let wantLeap=null;
+      if(leapChance==='100')wantLeap=true;
+      else if(leapChance==='75')wantLeap=r<0.75;
+      else if(leapChance==='50')wantLeap=r<0.5;
+      // janFebChance / julianChance — Option A semantics: the listed % is the exact
+      // final probability that the output matches the bias. 'random' means no biasing
+      // (natural distribution under the year range + leap settings). On non-'random' values,
+      // we roll a separate Math.random() up front so the bias decision is independent of
+      // leap. On hit, force toward the bias; on miss, force away. This guarantees the final
+      // percentage equals the chosen value rather than (chance × 1 + (1-chance) × natural).
+      const rjf=Math.random();
+      let wantJanFeb=null;
+      if(janFebChance==='100')wantJanFeb=true;
+      else if(janFebChance==='75')wantJanFeb=rjf<0.75;
+      else if(janFebChance==='50')wantJanFeb=rjf<0.5;
+      else if(janFebChance==='25')wantJanFeb=rjf<0.25;
+      // julianChance only applies when the Use Julian Calendar toggle is on; if julian=false,
+      // every date is treated as Gregorian regardless of year, so biasing is meaningless.
+      const rjul=Math.random();
+      let wantJulian=null;
+      if(julian){
+        if(julianChance==='100')wantJulian=true;
+        else if(julianChance==='75')wantJulian=rjul<0.75;
+        else if(julianChance==='50')wantJulian=rjul<0.5;
+        else if(julianChance==='25')wantJulian=rjul<0.25;
+      }
+      // Try preference-respecting attempts first; fall back to no preference if year range has no leap years
+      for(let attempts=0;attempts<2000;attempts++){
+        let y=rint(lo,hi);if(y===0)continue;
+        // Per-date leap check: only apply Julian leap rule if the year actually falls in the Julian period.
+        // Without this, useJulian=on caused isLeapJulian to be applied to post-1582 years, which disagrees with
+        // dimFn / isJulianDate / the codes panel — manifesting as e.g. 1900 being treated as a leap year for
+        // wantLeap/forceJanFeb purposes while the codes panel correctly reports Gregorian non-leap.
+        const inJulianRange=julian&&y<1582;
+        const isLeapY=inJulianRange?isLeapJulian(y):isLeap(y);
+        if(wantLeap!==null&&wantLeap!==isLeapY)continue;
+        let m;
+        if(wantJanFeb!==null&&isLeapY){
+          // On leap years, force toward (or away from) Jan/Feb based on the rolled bias.
+          // Non-leap years are unaffected — Jan/Feb chance only applies on leap years.
+          m=wantJanFeb?rint(1,2):rint(3,12);
+        }else{
+          m=rint(1,12);
+        }
+        const isJul=julian&&isJulianDate(y,m,1);
+        const maxD=m===2?((isJul?isLeapJulian(y):isLeap(y))?29:28):([4,6,9,11].includes(m)?30:31);
+        let d=rint(1,maxD);
+        if(isGapDate(y,m,d))continue;
+        // Julian-chance bias is checked against the final (y,m,d) since year 1582 contains
+        // both Julian (Jan-Sep + Oct 1-4) and Gregorian (Oct 15+ + Nov + Dec) dates.
+        if(wantJulian!==null){
+          const isJ=isJulianDate(y,m,d);
+          if(wantJulian!==isJ)continue;
+        }
+        return{y,m,d};
+      }
+      // Silent fallback: no leap-preference / janFeb / julian filter
+      for(;;){
+        let y=rint(lo,hi);if(y===0)continue;
+        let m=rint(1,12);
+        const isJul=julian&&isJulianDate(y,m,1);
+        const maxD=m===2?((isJul?isLeapJulian(y):isLeap(y))?29:28):([4,6,9,11].includes(m)?30:31);
+        let d=rint(1,maxD);
+        if(isGapDate(y,m,d))continue;
+        return{y,m,d};
+      }
+    }
+    const blankDedTypeStore=()=>({year:null,month:null,day:null});
+    // Format IDs and rollFormat live at module scope so the dateByMode useState
+    // initializer can stamp ._fmt on the very first dates. Previously these were
+    // declared inside the component, which meant the initializer fell back to
+    // dateFormat (default 'written-mdy') for the first date in each mode even
+    // when randomFormat was on — visible as "April 2, 2020" being the first
+    // launch date every time. Other call sites (attachFmt, advanceDate) use
+    // these same module-scope versions.
+    const FORMAT_IDS=['written-mdy','written-dmy','numeric-mdy','numeric-dmy','numeric-ymd'];
+    const rollFormat=()=>FORMAT_IDS[Math.floor(Math.random()*FORMAT_IDS.length)];
+    const normalizeMod7=v=>((v%7)+7)%7;
+    const canonicalizeMod=v=>{const m=normalizeMod7(v);return m>3?m-7:m;};
+    function calcDayCode(d){const lo=Math.floor(d/7)*7,hi=lo+7,fl=d-lo,fu=d-hi;return Math.abs(fu)<=Math.abs(fl)?fu:fl;}
+    function calcCdCode(cd){if(METHOD_CD_ADVANCED_ZERO_YEARS.has(cd))return 0;let b=METHOD_CD_ADVANCED_LEAP_ORDER[0];for(const y of METHOD_CD_ADVANCED_LEAP_ORDER){if(y>cd)break;b=y;}return canonicalizeMod((METHOD_CD_ADVANCED_LEAP_MAP.get(b)??0)+(cd-b));}
+    function yearParts(y){const f=((y%10000)+10000)%10000;return{a:Math.floor(f/1000),b:Math.floor((f%1000)/100),cd:f%100};}
+    // leapCode is the calculation contribution for leap correction (matches the
+    // framing of the other numeric codes in the codes panel): -1 only when it's
+    // a leap year AND month is January or February (where the leap correction
+    // applies in the day-of-week calculation), 0 otherwise. leapYear boolean is
+    // kept in the return object too in case future code needs the underlying state.
+    function computeMethodSummary({y,m,d},useJulian=false){if(!Number.isFinite(y)||y<=0)return null;const mc=METHOD_MONTH_CODES[m]??null;if(mc==null)return null;const p=yearParts(y);const julian=useJulian&&isJulianDate(y,m,d);const abCode=julian?(JULIAN_AB_MAP.get(p.a*10+p.b)??0):((p.a%2===0?METHOD_AB_ADVANCED_MAP.even:METHOD_AB_ADVANCED_MAP.odd).get(p.b)??0);const leapYear=julian?isLeapJulian(y):isLeap(y);const leapCode=(leapYear&&(m===1||m===2))?-1:0;const weekday=DAY[julian?wdayJulian(y,m,d):wday(y,m,d)];return{monthCode:mc,dayCode:calcDayCode(d),abCode,cdCode:calcCdCode(p.cd),leapYear,leapCode,weekday,calendarSystem:julian?'Julian':'Gregorian'};}
+    const isTouch=typeof window!=="undefined"&&("ontouchstart" in window||navigator.maxTouchPoints>0||matchMedia("(pointer:coarse)").matches);
+    const isTimer=m=>m==="blitz"||m==="flash";
+    const fmtBlitzT=s=>{const sec=Math.ceil(s);if(sec<60)return sec+"s";const m=Math.floor(sec/60),r=sec%60;return m+"m "+r+"s";};
+    const fmtFlashT=ms=>(ms/1000).toFixed(1)+"s";
+    // Time display follows WCA convention (regulation 9f1): individual single times
+    // (Last) are truncated to hundredths — the third decimal is dropped, never rounded.
+    // Averages, medians, and bests are rounded to nearest hundredth (toFixed(2)).
+    // truncTime drops the third decimal; fmtTime rounds via toFixed(2).
+    const truncTime=t=>(t==null||t>=60)?"—":`${(Math.floor(t*100)/100).toFixed(2)}s`;
+    const fmtTime=t=>(t==null||t>=60)?"—":`${t.toFixed(2)}s`;
+    // WCA-consistent accuracy formatter: when there's at least one wrong answer, floor (truncate) the
+    // percentage so we never display "100.0%" for 9999/10000 (which rounds up under toFixed). Pure 100%
+    // displays normally. Same philosophy as truncTime (regulation 9f1) — never inflate the user's result.
+    const fmtAccuracyPct=(good,played)=>{
+      if(!played)return"—";
+      const pct=good/played*100;
+      if(good<played&&pct>=99.95)return"99.9%";
+      return`${pct.toFixed(1)}%`;
+    };
+    const calcAvg=t=>t.length?t.reduce((a,b)=>a+b,0)/t.length:null;
+    const calcLast=t=>t.length?t[t.length-1]:null;
+    const calcMed=t=>{if(!t.length)return null;const s=[...t].sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;};
+    const blockMinus=e=>{if(e.key==="-"||e.key==="Subtract"||e.key==="Minus")e.preventDefault();};
+    const blockMinusBI=e=>{if(e.data&&e.data.includes("-"))e.preventDefault();};
+    function jdnJulian(y,m,d){const a=Math.floor((14-m)/12),y2=y+4800-a,m2=m-3+12*a;return d+Math.floor((153*m2+2)/5)+365*y2+Math.floor(y2/4)-32083;}
+    const wdayJulian=(y,m,d)=>((jdnJulian(toAstro(y),m,d)+1)%7+7)%7;
+    const isLeapJulian=y=>{y=toAstro(y);return y%4===0;};
+    // Returns true if [lo,hi] contains at least one leap year, evaluated under the active calendar
+    // (Julian rule for years <1582 when useJulian is on; Gregorian rule otherwise). Used to lock the
+    // Leap Year Chance buttons when no leap year is reachable — without this, setting 50/75/100% would
+    // be silently ignored per date with no visible signal that the setting can't take effect.
+    function rangeHasLeapYear(lo,hi,useJulian){
+      lo=Math.max(1,lo);hi=Math.min(10000,hi);if(lo>hi)return false;
+      // Check every multiple of 4 in [lo,hi]. Non-multiples can't be leap years under either rule.
+      const start=lo+((4-(lo%4))%4);
+      for(let y=start;y<=hi;y+=4){
+        if(y===0)continue;
+        const inJulianRange=useJulian&&y<1582;
+        if(inJulianRange?isLeapJulian(y):isLeap(y))return true;
+      }
+      return false;
+    }
+    const isJulianDate=(y,m,d)=>y<1582||(y===1582&&(m<10||(m===10&&d<=4)));
+    const isGapDate=(y,m,d)=>y===1582&&m===10&&d>=5&&d<=14;
+    const JULIAN_AB_MAP=new Map([[0,-2],[1,-3],[2,3],[3,2],[4,1],[5,0],[6,-1],[7,-2],[8,-3],[9,3],[10,2],[11,1],[12,0],[13,-1],[14,-2],[15,-3]]);
+
+    // Returns an entry's btns augmented with a synthesized green on the correct
+    // answer when the entry has a wrong but no correct. Also downgrades any
+    // 'wrong-latest' to 'wrong-prev' so the dim-when-green-present rendering
+    // applies to all reds in the augmented entry. The synthesized green
+    // honors the entry's _jul snapshot (calendar system at generation), with
+    // fallbackJulian used when the snapshot is missing.
+    // For deduction entries (entry.type set), the correct index is derived per
+    // sub-mode: year uses options.indexOf(y); month uses boxes.findIndex by m
+    // (or options.indexOf when no boxes); day uses options.indexOf(d).
+    // Non-deduction entries use wday/wdayJulian on (y,m,d).
+    const entryWithGreen=(entry,fallbackJulian)=>{
+      if(!entry)return entry;
+      const btns=entry.btns||{};
+      const vals=Object.values(btns);
+      const hasCorrect=vals.includes('correct');
+      if(hasCorrect)return entry;
+      const hasWrong=vals.some(v=>v==='wrong'||v==='wrong-latest'||v==='wrong-prev');
+      if(!hasWrong)return entry;
+      let correctIdx=-1;
+      if(entry.type){
+        if(entry.type==='year'&&entry.options)correctIdx=entry.options.findIndex(yy=>yy===entry.y);
+        else if(entry.type==='month'){
+          if(entry.boxes)correctIdx=entry.boxes.findIndex(b=>b.months&&b.months.includes(entry.m));
+          else if(entry.options)correctIdx=entry.options.findIndex(mm=>mm===entry.m);
+        }
+        else if(entry.type==='day'&&entry.options)correctIdx=entry.options.findIndex(dd=>dd===entry.d);
+      }else{
+        const useJul=(entry._jul!=null?entry._jul:fallbackJulian)&&isJulianDate(entry.y,entry.m,entry.d);
+        correctIdx=useJul?wdayJulian(entry.y,entry.m,entry.d):wday(entry.y,entry.m,entry.d);
+      }
+      if(correctIdx<0)return entry;
+      const newBtns={...btns};
+      for(const k in newBtns){if(newBtns[k]==='wrong-latest')newBtns[k]='wrong-prev';}
+      newBtns[correctIdx]='correct';
+      return{...entry,btns:newBtns};
+    };
+
+    // Timing constants (keep in sync with CSS .expander transition)
+    const CODES_CLOSE_MS=310; // frozen-date unfreeze delay; >= CSS .expander close (.28s) + small buffer
+    const FLASH_MS=550;       // green/red button flash duration (ms)
+
+    // Shared button-state helpers (used by both App and AoxMode)
+    const computeHasCredit=btns=>{if(!btns)return false;const vals=Object.values(btns);return vals.length>0&&vals.includes('correct')&&!vals.some(v=>v==='wrong-latest'||v==='wrong-prev');};
+    const markBtns=(btns,idx,state)=>{const next={...btns};for(const k in next){if(next[k]==='wrong-latest')next[k]='wrong-prev';}next[idx]=state;return next;};
+    const mkBtnsWithCorrect=(btns,idx)=>markBtns(btns,idx,'correct');
+
+    function Expander({open,children}){
+      const outerRef=useRef(null);
+      const innerRef=useRef(null);
+      const prevOpenRef=useRef(open);
+      const mountedRef=useRef(false);
+      const resizeObsRef=useRef(null);
+      useLayoutEffect(()=>{
+        const el=outerRef.current;if(!el)return;
+        const attachObs=()=>{
+          if(typeof ResizeObserver==="undefined"||!innerRef.current||!outerRef.current)return;
+          // Disconnect any prior observer before creating a new one. Currently the effect cleanup
+          // handles disconnection between effect runs, so this guard only matters if a future change
+          // calls attachObs twice within a single effect run (which would otherwise orphan the first).
+          if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}
+          const obs=new ResizeObserver(()=>{
+            if(!outerRef.current||!innerRef.current)return;
+            outerRef.current.style.maxHeight=(innerRef.current.scrollHeight+16)+"px";
+          });
+          obs.observe(innerRef.current);
+          resizeObsRef.current=obs;
+        };
+        if(!mountedRef.current){
+          mountedRef.current=true;
+          prevOpenRef.current=open;
+          if(open){
+            el.style.transition='none';
+            el.style.maxHeight=(innerRef.current?.scrollHeight??0)+16+"px";
+            el.getBoundingClientRect();
+            el.style.transition='';
+            attachObs();
+          }else{
+            el.style.maxHeight="0px";
+          }
+          return()=>{if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}};
+        }
+        const wasOpen=prevOpenRef.current;prevOpenRef.current=open;
+        if(open){
+          el.style.maxHeight=(innerRef.current?.scrollHeight??0)+16+"px";
+          attachObs();
+        }else if(!wasOpen){
+          el.style.maxHeight="0px";
+        }else{
+          el.style.maxHeight=el.scrollHeight+"px";
+          el.getBoundingClientRect();
+          el.style.maxHeight="0px";
+        }
+        return()=>{if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}};
+      },[open]);
+      return(<div ref={outerRef} className="expander"><div ref={innerRef}>{children}</div></div>);
+    }
+
+
+
+    const DEPLOY_TS=new Date('2026-05-29T18:33:00Z');
+
+    function StatPanel({stats,armedSpan}){
+      // For fractional values (Score, Streak as "X/Y"), shrink the value font
+      // when either side reaches 1000+ or 10000+ to prevent overflow on long
+      // sessions. Non-fractional values (Accuracy, Last, Average, Median)
+      // stay at default size — they don't grow this way in practice.
+      //
+      // Bug #4 armedSpan: when present, replaces stats[armedSpan.startIdx..endIdx]
+      // (inclusive) with a single wide "Enable and Reset Stats?" warning button.
+      // Used by the App-side timing-arm flow to merge the 3 time stat boxes into one
+      // confirmation target. Shape: {startIdx, endIdx, label, onClick, btnRef}.
+      const sizeForValue=(val)=>{
+        const s=String(val);
+        if(!s.includes('/'))return"text-sm";
+        const sideMax=Math.max(...s.split('/').map(p=>p.length));
+        if(sideMax>=5)return"text-[10px]";
+        if(sideMax>=4)return"text-xs";
+        return"text-sm";
+      };
+      return(
+        <div className="mt-4 rounded-2xl panel flex overflow-hidden">
+          {(()=>{
+            const items=[];
+            for(let i=0;i<stats.length;i++){
+              if(armedSpan&&i===armedSpan.startIdx){
+                const span=armedSpan.endIdx-armedSpan.startIdx+1;
+                // Bug #4 aesthetic: no ring or rounded corners on the merged warning button.
+                // The text change ('Enable and Reset Stats?') is the sole visual cue. The
+                // standard vertical divider between Streak and this button is already
+                // present (it was the Streak|Last divider in unarmed state) — no element
+                // positions shift between armed and unarmed states.
+                //
+                // Phantom spacers: when the 3 time stat boxes merge into 1 warning button,
+                // 2 internal dividers (Last|Avg and Avg|Med) disappear from the flex row.
+                // Without compensation, those 2px get redistributed across the remaining
+                // flex items, shifting the Streak-right divider 1px right and stretching
+                // every box before it. Two 1px-wide transparent spacers — one before, one
+                // after the button — restore exact unarmed flex math: Streak-right divider
+                // is locked in place and the warning text sits exactly centered between
+                // that divider and the panel's right edge.
+                items.push(<div key="armed-spacer-l" className="w-px shrink-0"/>);
+                items.push(
+                  <button
+                    key="armed-warning"
+                    ref={armedSpan.btnRef}
+                    type="button"
+                    onClick={armedSpan.onClick}
+                    style={{flex:span}}
+                    className="flex items-center justify-center py-2 text-xs font-medium"
+                  >{armedSpan.label}</button>
+                );
+                items.push(<div key="armed-spacer-r" className="w-px shrink-0"/>);
+                if(armedSpan.endIdx<stats.length-1){
+                  items.push(<div key={`d-armed-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
+                }
+                i=armedSpan.endIdx;
+                continue;
+              }
+              const s=stats[i];
+              const Tag=s.fn?"button":"div";
+              const props=s.fn?{type:"button",onClick:s.fn}:{};
+              const sz=sizeForValue(s.value);
+              items.push(
+                <Tag key={s.label} {...props} className="flex-1 flex flex-col items-center py-2 gap-0.5">
+                  <span className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off?" line-through":""}`}>{s.label}</span>
+                  <span className={`${sz} font-semibold tabular-nums leading-tight mt-0.5`}>{s.off?"—":s.value}</span>
+                </Tag>
+              );
+              if(i<stats.length-1){
+                items.push(<div key={`d-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
+              }
+            }
+            return items;
+          })()}
+        </div>
+      );
+    }
+
+    function CustomSelect({value,onChange,options,className,wrapperClassName,ariaLabel,wrapperRef,showChevron=false,openUp=false}){
+      // Custom dropdown that mimics the native iOS picker visually but renders
+      // entirely from page DOM. Replaces native <select> elements site-wide so
+      // iOS WebKit's popover dismissal heuristic (which auto-closes the native
+      // picker after recent layout activity, e.g. immediately following a mode
+      // or theme change) cannot affect Calendar Game's controls. Same component
+      // is used for the header mode select and the three theme selects in the
+      // settings popover.
+      //
+      // Visual design (matches iOS native picker):
+      // - Light translucent surface (rgba(245,245,247,0.50)) regardless of app
+      //   theme — iOS itself keeps the picker light in dark mode, we mirror that.
+      //   Alpha is intentionally low so dark backgrounds bleed through and tone
+      //   down the brightness; blur is bumped to 28px to keep the frosted look
+      //   at the lower alpha.
+      // - Backdrop blur + saturate filter for the frosted-glass effect.
+      // - Rounded corners, subtle shadow, dark text, checkmark on selected.
+      // - Trigger button reuses the original <select>'s className so the visible
+      //   trigger styling is unchanged.
+      // - All option labels are rendered in a CSS grid cell on top of each
+      //   other (only the selected one visible) so the trigger's width is
+      //   stable across selections — same auto-fit-to-longest behavior as the
+      //   native <select>, no layout shift on change.
+      // - Panel sizes purely to its content (width:max-content, no minWidth).
+      //   This gives every dropdown the same visual right padding regardless
+      //   of trigger width — wide triggers (theme selects with flex-1) get a
+      //   panel that's content-sized and hangs off the right edge of the
+      //   trigger, exactly like the native iOS picker.
+      // - The panel is rendered through a portal into #root (NOT as a child of
+      //   the trigger's wrapper). This is required for the frosted-glass blur:
+      //   iOS Safari degrades backdrop-filter when the filtered element sits
+      //   inside a scrollable (overflow:auto/scroll) ancestor, and the three
+      //   theme selects live inside the settings popover's inner scroll wrapper.
+      //   Nested there, their panels rendered nearly transparent. Portaling to
+      //   #root (which is overflow:hidden, NOT scrollable — the mode select has
+      //   always rendered fine under it) escapes the scroll container so the
+      //   blur composites correctly. The mode select is portaled the same way
+      //   for one consistent code path. (History: we first tried portaling the
+      //   whole settings popover out of the fixed bar, on the theory the FIXED
+      //   bar broke the frost. It didn't — the scroll container did — so that
+      //   popover-portal was reverted and only the panel is portaled.)
+      // - Because it's portaled, the panel is position:absolute inside #root
+      //   (which is position:fixed; inset:0, so its coordinate space IS the
+      //   viewport) with right + top/bottom measured from the trigger's bounding
+      //   rect (panelPos). Right-aligned to the trigger, offset 6px below it
+      //   (or above, when flipping up) — visually identical to the old in-wrapper
+      //   absolute placement. #root's overflow:hidden clips at the viewport edge,
+      //   so flip-up still matters. A scroll/resize listener re-measures while
+      //   open so the panel stays pinned to its trigger as the popover scrolls.
+      // - Open direction (up vs down) is decided at toggle time from the trigger
+      //   rect measured against the viewport: not enough room below AND more room
+      //   above → flip above. (Now that the panel escapes to #root, the viewport
+      //   is the only clipping boundary, so this measures viewport space directly
+      //   — which is why the old findClippingAncestor helper is gone.)
+      //   The openUp prop overrides this and forces upward, skipping the
+      //   measurement entirely — used by the theme selects, which sit at the
+      //   bottom of the settings popover where there is always room above.
+      //
+      // wrapperRef is forwarded to the outer relative div so callers (e.g. the
+      // settings click-outside handler) can keep treating the wrapper the same
+      // way they treated the original <select> ref.
+      // wrapperClassName attaches to the outer relative div. Theme selects pass
+      // "flex-1" here (not on the inner button) so the wrapper itself fills its
+      // flex row — matches the original <select>'s flex-1 behavior.
+      const [open,setOpen]=useState(false);
+      // activeIdx tracks the keyboard-highlighted option (≠ selected value). -1 when nothing is
+      // highlighted (e.g. mouse-only interaction). Reset to selected option's index on open so
+      // ↑/↓ start from the current value, not the top.
+      const [activeIdx,setActiveIdx]=useState(-1);
+      const localRef=useRef(null);
+      const ref=wrapperRef||localRef;
+      const triggerRef=useRef(null);
+      const listboxId=useRef(`cs-list-${Math.random().toString(36).slice(2,9)}`).current;
+      const optionId=i=>`${listboxId}-opt-${i}`;
+      const selectedIdx=options.findIndex(o=>o.value===value);
+      // panelRef points at the PORTALED panel so the click-outside handler can
+      // treat taps inside it as "inside" (the panel is no longer a DOM descendant
+      // of the wrapper). openUpwardRef holds the flip decision as a ref (not state)
+      // so measurePanel can read it synchronously within the same toggle that sets
+      // it. panelPos holds the measured viewport coordinates for the portal.
+      const panelRef=useRef(null);
+      const openUpwardRef=useRef(false);
+      const [panelPos,setPanelPos]=useState(null);
+      // ⚠ STABILITY NOTE: the dropdown's portal positioning (measurePanel) and
+      // open-direction logic (handleToggle, plus the openUp override) were tuned
+      // against iOS Safari over several attempts and are QA-confirmed working.
+      // They look like ordinary geometry but are device-sensitive — ALWAYS
+      // re-verify on iPhone Safari (browser + PWA) after editing anything here.
+      // measurePanel reads the trigger's current viewport rect and writes panelPos:
+      // right edge aligned to the trigger, 6px below it (top) when opening down, or
+      // 6px above it (bottom) when flipping up. Called on open and on scroll/resize
+      // so the portaled panel stays pinned to its trigger.
+      const measurePanel=()=>{
+        if(!ref.current)return;
+        const rect=ref.current.getBoundingClientRect();
+        const right=window.innerWidth-rect.right;
+        if(openUpwardRef.current)setPanelPos({right,bottom:window.innerHeight-rect.top+6});
+        else setPanelPos({right,top:rect.bottom+6});
+      };
+      // Toggle handler measures available space the moment the dropdown opens.
+      // Each option button is ~45px tall (py-3 + text-[15px]) plus a small panel
+      // margin. If space below the trigger in the viewport isn't enough AND there's
+      // more space above, flip upward. visualViewport height is used (it excludes
+      // Safari's bottom toolbar) so bottom-of-screen dropdowns don't open down into
+      // toolbar-covered space. The 16px buffer keeps the panel off the edge.
+      // Measurement only happens on open (close is cheap).
+      const handleToggle=()=>{
+        if(!open&&ref.current){
+          if(openUp){
+            // Caller forces upward (theme selects — always room above them).
+            openUpwardRef.current=true;
+          }else{
+            const rect=ref.current.getBoundingClientRect();
+            const vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
+            const spaceBelow=vh-rect.bottom-16;
+            const spaceAbove=rect.top-16;
+            const estimatedHeight=options.length*45+10;
+            openUpwardRef.current=spaceBelow<estimatedHeight&&spaceAbove>spaceBelow;
+          }
+          measurePanel();
+          setActiveIdx(selectedIdx>=0?selectedIdx:0);
+        }
+        setOpen(v=>!v);
+      };
+      const closeAndFocus=()=>{setOpen(false);setActiveIdx(-1);if(triggerRef.current)triggerRef.current.focus();};
+      const selectAt=i=>{if(i<0||i>=options.length)return;onChange(options[i].value);closeAndFocus();};
+      // Trigger keyboard handler — opens dropdown with ↑/↓/Enter/Space, then arrow nav happens
+      // via the document-level handler below (set up only when open). Standard listbox pattern.
+      const handleTriggerKeyDown=e=>{
+        if(open){
+          if(e.key==="Escape"){e.preventDefault();closeAndFocus();}
+          else if(e.key==="ArrowDown"){e.preventDefault();setActiveIdx(i=>Math.min(options.length-1,(i<0?selectedIdx:i)+1));}
+          else if(e.key==="ArrowUp"){e.preventDefault();setActiveIdx(i=>Math.max(0,(i<0?selectedIdx:i)-1));}
+          else if(e.key==="Home"){e.preventDefault();setActiveIdx(0);}
+          else if(e.key==="End"){e.preventDefault();setActiveIdx(options.length-1);}
+          else if(e.key==="Enter"||e.key===" "){e.preventDefault();selectAt(activeIdx>=0?activeIdx:selectedIdx);}
+          else if(e.key==="Tab"&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){e.preventDefault();e.stopPropagation();setOpen(false);setActiveIdx(-1);}
+          return;
+        }
+        if(e.key==="ArrowDown"||e.key==="ArrowUp"||e.key==="Enter"||e.key===" "){e.preventDefault();handleToggle();}
+      };
+      useEffect(()=>{
+        if(!open)return;
+        const h=(e)=>{
+          if(!ref.current||ref.current.contains(e.target))return;
+          // The panel is portaled out of the wrapper, so a tap on an option is NOT
+          // contained by ref.current — without this, the mousedown/touchstart handler
+          // would close the dropdown before the option's click (selection) fired.
+          if(panelRef.current&&panelRef.current.contains(e.target))return;
+          // Ignore mousedowns that landed in a scrollbar (Windows native scrollbars register
+          // mousedown on the scrolling element itself). Without this, dragging the Settings
+          // popover's scrollbar while a dropdown inside it is open closes the dropdown.
+          const t=e.target;
+          if(t&&t.nodeType===1){
+            const r=t.getBoundingClientRect();
+            if(t.scrollHeight>t.clientHeight&&e.clientX!=null&&e.clientX>r.left+t.clientWidth)return;
+            if(t.scrollWidth>t.clientWidth&&e.clientY!=null&&e.clientY>r.top+t.clientHeight)return;
+          }
+          setOpen(false);
+        };
+        document.addEventListener('mousedown',h);
+        document.addEventListener('touchstart',h);
+        return()=>{
+          document.removeEventListener('mousedown',h);
+          document.removeEventListener('touchstart',h);
+        };
+      },[open]);
+      // Keep the portaled panel pinned to its trigger while open: any scroll
+      // (capture phase, since scroll doesn't bubble — this catches the settings
+      // popover's inner scroll wrapper) or viewport resize re-measures panelPos.
+      useEffect(()=>{
+        if(!open)return;
+        const reposition=()=>measurePanel();
+        window.addEventListener('scroll',reposition,true);
+        window.addEventListener('resize',reposition);
+        const vv=window.visualViewport;
+        if(vv){vv.addEventListener('resize',reposition);vv.addEventListener('scroll',reposition);}
+        return()=>{
+          window.removeEventListener('scroll',reposition,true);
+          window.removeEventListener('resize',reposition);
+          if(vv){vv.removeEventListener('resize',reposition);vv.removeEventListener('scroll',reposition);}
+        };
+      },[open]);
+      return(
+        <div ref={ref} className={`relative ${wrapperClassName||""}`}>
+          <button ref={triggerRef} type="button" onClick={handleToggle} onKeyDown={handleTriggerKeyDown} className={className} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} aria-controls={open?listboxId:undefined} aria-activedescendant={open&&activeIdx>=0?optionId(activeIdx):undefined}>
+            <span className="grid items-center">
+              {options.map(o=>(<span key={o.value} className={`col-start-1 row-start-1 truncate text-left ${o.value===value?'':'invisible'}`} aria-hidden={o.value!==value}>{o.label}</span>))}
+            </span>
+          </button>
+          {showChevron&&(<div className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 flex flex-col items-center leading-none text-[7px] text-white/90"><span>▲</span><span>▼</span></div>)}
+          {open&&panelPos&&ReactDOM.createPortal(
+            <div ref={panelRef} id={listboxId} role="listbox" aria-label={ariaLabel} className="rounded-2xl overflow-hidden" style={{position:'absolute',right:panelPos.right,...(panelPos.top!=null?{top:panelPos.top}:{bottom:panelPos.bottom}),zIndex:60,background:'rgba(245,245,247,0.50)',WebkitBackdropFilter:'blur(28px) saturate(120%)',backdropFilter:'blur(28px) saturate(120%)',boxShadow:'0 6px 28px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.05)',width:'max-content',maxWidth:'90vw'}}>
+              {options.map((opt,i)=>(
+                <button id={optionId(i)} role="option" aria-selected={opt.value===value} key={opt.value} type="button" onMouseEnter={()=>setActiveIdx(i)} onClick={()=>{onChange(opt.value);closeAndFocus();}} className={`w-full text-left pl-4 pr-8 py-3 text-[15px] flex items-center gap-2.5 ${i===activeIdx?'bg-black/10':'active:bg-black/10'}`} style={{color:'#1a1a1a',whiteSpace:'nowrap'}}>
+                  <span style={{display:'inline-block',width:'14px',color:'#1a1a1a',fontSize:'14px'}}>{opt.value===value?'✓':''}</span>
+                  <span>{opt.label}</span>
+                </button>
+              ))}
+            </div>,
+            document.getElementById('root')
+          )}
+        </div>
+      );
+    }
+
+    function AoxMode({minY,maxY,visible,fmtDate,useJulian=false,genDate=randomDate,leapChance='random',janFebChance='random',julianChance='random',randomFormat=false,dateFormat='written-mdy',saveStats=true,onFreshChange}){
+      const [aoxN,setAoxN]=useState("10");
+      const [allowMistakes,setAllowMistakes]=useState(false);
+      const [oneByOne,setOneByOne]=useState(false);
+      const [date,setDate]=useState(()=>genDate(minY,maxY));
+      const [runPhase,setRunPhase]=useState("idle");
+      const [displayN,setDisplayN]=useState(10);
+      const [shown,setShown]=useState(false);
+      const [inBackMode,setInBackMode]=useState(false);
+      const [aoxStack,setAoxStack]=useState([]);
+      const [aoxForwardStack,setAoxForwardStack]=useState([]);
+      const [times,setTimes]=useState([]);
+      const [streak,setStreak]=useState(0);
+      const [bestStreak,setBestStreak]=useState(0);
+      const [attempts,setAttempts]=useState(0);
+      const [flash,setFlash]=useState(null);
+      // Latest-timeout tracker for setFlash. Without this, two rapid setFlash calls (e.g. fast
+      // successive correct answers in AoX runs) would let the older timeout fire mid-flash on the
+      // newer one, cutting it short. setFlashWithTimeout cancels any pending timeout before
+      // scheduling a new one, so each flash gets the full FLASH_MS duration.
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const [aoxPersistBtns,setAoxPersistBtns]=useState({});
+      const markAoxWrong=idx=>setAoxPersistBtns(prev=>markBtns(prev,idx,'wrong-latest'));
+      const markAoxCorrect=idx=>setAoxPersistBtns(prev=>markBtns(prev,idx,'correct'));
+      const resetAoxPB=()=>setAoxPersistBtns({});
+      const [codesOpen,setCodesOpen]=useState(false);
+      const [aoxFrozenDate,setAoxFrozenDate]=useState(()=>({...date}));
+      const latestAoxDateRef=useRef(null);
+      const wasCodesOpenRef=useRef(false);
+      const prevAoxPopRef=useRef({randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance});
+      const [canOverrideCorrect,setCanOverrideCorrect]=useState(false);
+      const tStartRef=useRef(null);
+      const wrongTimeRef=useRef(null);
+      const prevTimesSnapRef=useRef(null);
+      const prevStreakSnapRef=useRef(null);
+      const prevBestSnapRef=useRef(null);
+      const nextRoundIdRef=useRef(1);
+      const bestRef=useRef({});
+      const [bestNew,setBestNew]=useState({});// {[key]:{avg:bool,med:bool}}
+      const [pendingWrongCredit,setPendingWrongCredit]=useState(null);
+      const [overrideUsedAox,setOverrideUsedAox]=useState(false);
+      const [aoxBrowseHasCredit,setAoxBrowseHasCredit]=useState(false);
+      const [questionCounted,setQuestionCounted]=useState(false);
+      // Freshness signal — true iff every internal AoX state field is at its initial-mount
+      // default. Reported up to App via onFreshChange so isFullyReset can dim the Full Reset
+      // button. bestRef is read directly; ref reads in a non-memoized expression aren't
+      // reactive on their own, but bestRef.current changes are always paired with setBestNew
+      // updates (in the same handlers), which trigger renders — so this expression re-evaluates
+      // with the up-to-date ref value whenever bestRef changes.
+      const aoxIsFreshLocal=aoxN==="10"&&allowMistakes===false&&oneByOne===false&&runPhase==="idle"&&shown===false&&inBackMode===false&&aoxStack.length===0&&aoxForwardStack.length===0&&times.length===0&&streak===0&&bestStreak===0&&attempts===0&&flash===null&&Object.keys(aoxPersistBtns).length===0&&codesOpen===false&&canOverrideCorrect===false&&Object.keys(bestRef.current).length===0&&Object.keys(bestNew).length===0&&pendingWrongCredit===null&&overrideUsedAox===false&&aoxBrowseHasCredit===false&&questionCounted===false;
+      useEffect(()=>{onFreshChange&&onFreshChange(aoxIsFreshLocal);},[aoxIsFreshLocal,onFreshChange]);
+      const correct=useMemo(()=>(useJulian&&isJulianDate(date.y,date.m,date.d))?wdayJulian(date.y,date.m,date.d):wday(date.y,date.m,date.d),[date,useJulian]);
+      const n=Math.max(2,Math.min(1000,parseInt(aoxN)||10));
+      // Best keying: bests are siloed per difficulty configuration so a Best Average
+      // achieved at one config doesn't compare against runs at a different config.
+      // Dimensions: n (Ao size), allowMistakes, format (random→'random' bucket, otherwise
+      // the specific format ID), leapChance, janFebChance, year range, useJulian.
+      // Changing any of these creates a fresh bucket; the previous bests remain stored
+      // and reappear when the user switches back to that exact config.
+      const bestKey=`${n}|${allowMistakes}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${minY}-${maxY}|${useJulian}`;
+      const bestData=bestRef.current[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+      const aoLabel=`Ao${n}`;
+      const doneCount=times.length;
+      const isRunning=runPhase==="running";
+      const isLocked=runPhase==="done"||runPhase==="failed";
+      const dateVisible=runPhase==="failed"||runPhase==="done"||(isRunning&&(!oneByOne||shown))||inBackMode;
+      const revealLocked=!isRunning||isLocked||codesOpen||(oneByOne&&!shown)||inBackMode;
+      const backDisabled=aoxStack.length===0||runPhase==="idle"||runPhase==="running";
+      // Identifying when "retroactive override of most recent stack entry" path
+      // is available in AoX. Conditions: live Q is fully untouched (running, no buttons
+      // clicked, no codes open, no other override path armed), aoxStack is nonempty,
+      // most recent stack entry hasn't been overridden, and that entry's capsule has
+      // a snapshot (right-answer entries only — see note below).
+      // BY DESIGN: AoX's back-browse override only handles right→wrong (entry's
+      // capsule.snapshot is the pre-Q times array, set only for correct answers).
+      // Wrong-answer entries have capsule.snapshot=null. The wrong→right retroactive
+      // override path is unreachable here because back-browse is locked while runs
+      // are active in both AoX and Blitz — so any code path that would hit a
+      // wrong-stack-entry retro-override never fires. App supports both directions
+      // because its snapshot is structured.
+      const aoxRetroOverrideEligible=(
+        isRunning && !inBackMode &&
+        Object.keys(aoxPersistBtns).length===0 &&
+        !codesOpen && !canOverrideCorrect &&
+        pendingWrongCredit==null &&
+        aoxStack.length>0 &&
+        !aoxStack[aoxStack.length-1].overrideUsed &&
+        aoxStack[aoxStack.length-1].capsule?.snapshot!=null
+      );
+      // Override is universally locked when Save Stats is off — same rule as App-side
+      // overrideAvail. AoX uses the `saveStats` prop (run-level, no per-Q freeze).
+      const overrideAvail=saveStats&&!overrideUsedAox&&(
+        (isRunning&&(Object.keys(aoxPersistBtns).length>0||codesOpen||canOverrideCorrect||pendingWrongCredit!=null))||
+        (runPhase==="failed")||
+        (runPhase==="done"&&canOverrideCorrect)||
+        aoxRetroOverrideEligible
+      );
+      const codesDisabled=runPhase==="idle"||(oneByOne&&!shown&&!inBackMode&&!isLocked);
+      const optionsDisabled=isLocked||codesOpen||(oneByOne&&!shown&&!inBackMode)||runPhase==="idle"||inBackMode;
+      // Tailwind's `transition` utility intentionally omitted — it would re-introduce
+      // a 150ms multi-property fade on persist (red on wrong, green at end of run)
+      // and on flash border-color. Hover fades are handled by surface-button's own
+      // targeted 200ms bg-only transition (see <style> block at top of file).
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-sm select-none";
+
+      function reset(){setRunPhase("idle");setDisplayN(n);setShown(false);setInBackMode(false);setAoxStack([]);setAoxForwardStack([]);setTimes([]);setStreak(0);setBestStreak(0);setAttempts(0);setFlash(null);resetAoxPB();setCodesOpen(false);setCanOverrideCorrect(false);setQuestionCounted(false);setPendingWrongCredit(null);setOverrideUsedAox(false);setBestNew({});setDate(genDate(minY,maxY));tStartRef.current=null;wrongTimeRef.current=null;prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;prevBestSnapRef.current=null;}
+      useEffect(()=>{if(!visible&&runPhase==="running")reset();},[visible]);
+      // Auto-reset/regen on popover setting change.
+      // Running: any setting change resets the round (Cat B). Format changes still flow
+      //   through anyChanged to trigger this round-end correctly.
+      // Done/failed: never auto-replace the displayed last-question date (Cat C).
+      // Idle (Cat A): per-setting rules for the currently displayed date —
+      //   Random Format toggle → always regen on any change (Bug #1)
+      //   Date Format dropdown → always regen on any change (Bug #1)
+      //   Leap Chance → always regen
+      //   Force Jan/Feb → always regen on toggle (Bug #3b; was previously content-gated)
+      //   Year range → always regen on any range edit
+      //   Julian → keep date (idle has no wrong guesses; current useJulian flows naturally
+      //            through correct-answer + codes panel)
+      useEffect(()=>{
+        const prev=prevAoxPopRef.current;
+        const dateFormatChanged=prev.dateFormat!==dateFormat;
+        const randomFormatChanged=prev.randomFormat!==randomFormat;
+        const leapChanceChanged=prev.leapChance!==leapChance;
+        const janFebChanceChanged=prev.janFebChance!==janFebChance;
+        const julianChanceChanged=prev.julianChance!==julianChance;
+        const yearRangeChanged=prev.minY!==minY||prev.maxY!==maxY;
+        const julianChanged=prev.useJulian!==useJulian;
+        prevAoxPopRef.current={randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance};
+        const anyChanged=dateFormatChanged||randomFormatChanged||leapChanceChanged||janFebChanceChanged||julianChanceChanged||yearRangeChanged||julianChanged;
+        if(!anyChanged)return;
+        if(runPhase==='running'){reset();return;}
+        if(runPhase!=='idle')return;
+        // Cat A (AoX idle) regen rules — mirrors App's regenDecisionFor. AoX idle has no
+        // wrong-guess possibility (clicks are gated by isRunning), so the wrong-guess
+        // defer branch isn't needed here.
+        //   leapChance — always regen
+        //   Random Format toggle (either direction) — always regen (Bug #1; previously gated)
+        //   Date Format dropdown change — always regen (Bug #1; previously gated on _fmt
+        //     mismatch and only when randomFormat was off)
+        //   Jan/Feb Chance — always regen on any chance value change (Option A semantics
+        //     replaces the prior Force Jan/Feb boolean toggle; Bug #3b unchanged)
+        //   Julian Chance — always regen on any chance value change (parallel to Jan/Feb Chance)
+        //   Year range — always regen on any range edit
+        //   Julian toggle (useJulian) — keep date (current useJulian flows through naturally to codes/answer)
+        if(leapChanceChanged||randomFormatChanged||dateFormatChanged||janFebChanceChanged||julianChanceChanged||yearRangeChanged){
+          setDate(genDate(minY,maxY));return;
+        }
+        // Julian change in idle: no wrong guesses, so keep date — current useJulian flows naturally.
+      },[randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance]);
+      // Frozen date for codes panel: during close animation, keep showing old codes; update new codes only after close finishes
+      latestAoxDateRef.current=date;
+      useEffect(()=>{
+        if(codesOpen){
+          wasCodesOpenRef.current=true;
+          setAoxFrozenDate(date);
+          return;
+        }
+        if(wasCodesOpenRef.current){
+          wasCodesOpenRef.current=false;
+          const t=setTimeout(()=>setAoxFrozenDate(latestAoxDateRef.current),CODES_CLOSE_MS);
+          return()=>clearTimeout(t);
+        }else{
+          setAoxFrozenDate(date);
+        }
+      },[codesOpen,date.y,date.m,date.d]);
+      function startOrContinue(){
+        if(runPhase==="idle"){setRunPhase("running");setDisplayN(n);setShown(true);tStartRef.current=performance.now();}
+        else if(inBackMode){
+          // Reconstruct history: push the displayed (back-browsed) entry and every
+          // non-live forward entry to aoxStack, in chronological order, so the run
+          // history isn't lost when continuing from back mode. The live forward entry
+          // (forwardStack[0], with isLive:true) is discarded because its slot is being
+          // regenerated.
+          const dispCapsule={snapshot:prevTimesSnapRef.current?[...prevTimesSnapRef.current]:null,streakSnap:prevStreakSnapRef.current?{...prevStreakSnapRef.current}:null,wrongTime:wrongTimeRef.current};
+          const dispEntry=entryWithGreen({...date,btns:{...aoxPersistBtns},overrideUsed:overrideUsedAox,capsule:dispCapsule,hasCredit:aoxBrowseHasCredit},useJulian);
+          const insertions=[dispEntry];
+          for(let i=aoxForwardStack.length-1;i>=1;i--){
+            const e=aoxForwardStack[i];
+            const{isLive:_il,...rest}=e;
+            insertions.push(rest);
+          }
+          setAoxStack(s=>[...s,...insertions]);
+          setInBackMode(false);setAoxForwardStack([]);
+          const nd=genDate(minY,maxY);setDate(nd);
+          resetAoxPB();setCodesOpen(false);
+          wrongTimeRef.current=null;
+          setCanOverrideCorrect(false);setQuestionCounted(false);setPendingWrongCredit(null);
+          setOverrideUsedAox(false);
+          if(oneByOne){setShown(false);tStartRef.current=null;}
+          else{setShown(true);tStartRef.current=performance.now();}
+        }
+        else if(isRunning&&!shown){setShown(true);tStartRef.current=performance.now();wrongTimeRef.current=null;setCanOverrideCorrect(false);setQuestionCounted(false);setPendingWrongCredit(null);}
+      }
+      function goBackAox(){if(backDisabled)return;const prevEntry=aoxStack[aoxStack.length-1];
+        if(codesOpen)setCodesOpen(false);
+        // Save current view to aox forward stack
+        const fwdHC=!inBackMode?computeHasCredit(aoxPersistBtns):aoxBrowseHasCredit;
+        const fwdEntry={...date,btns:{...aoxPersistBtns},overrideUsed:overrideUsedAox,capsule:{snapshot:prevTimesSnapRef.current?[...prevTimesSnapRef.current]:null,streakSnap:prevStreakSnapRef.current?{...prevStreakSnapRef.current}:null,wrongTime:wrongTimeRef.current,canOverrideCorrect,questionCounted,pendingWrongCredit},isLive:!inBackMode,hasCredit:fwdHC};
+        setAoxForwardStack(s=>[...s,fwdEntry]);
+        setAoxStack(s=>s.slice(0,-1));setDate({...prevEntry});setInBackMode(true);
+        // Restore capsule for override
+        const cap=prevEntry.capsule||{};
+        prevTimesSnapRef.current=cap.snapshot||null;prevStreakSnapRef.current=cap.streakSnap||null;wrongTimeRef.current=cap.wrongTime??null;
+        setCanOverrideCorrect(cap.snapshot!=null&&!(prevEntry.overrideUsed||false));
+        setOverrideUsedAox(prevEntry.overrideUsed||false);
+        const prevWday=(useJulian&&isJulianDate(prevEntry.y,prevEntry.m,prevEntry.d))?wdayJulian(prevEntry.y,prevEntry.m,prevEntry.d):wday(prevEntry.y,prevEntry.m,prevEntry.d);
+        setAoxPersistBtns(prevEntry.btns??{[prevWday]:'correct'});setCodesOpen(false);setPendingWrongCredit(null);setQuestionCounted(false);
+        setAoxBrowseHasCredit(prevEntry.hasCredit??computeHasCredit(prevEntry.btns));
+      }
+      function goForwardAox(){
+        const fwd=aoxForwardStack[aoxForwardStack.length-1];if(!fwd)return;
+        if(codesOpen)setCodesOpen(false);
+        setAoxForwardStack(s=>s.slice(0,-1));
+        // Push current browsed entry back to aoxStack
+        const capsule={snapshot:prevTimesSnapRef.current?[...prevTimesSnapRef.current]:null,streakSnap:prevStreakSnapRef.current?{...prevStreakSnapRef.current}:null,wrongTime:wrongTimeRef.current};
+        setAoxStack(s=>[...s,entryWithGreen({...date,btns:{...aoxPersistBtns},overrideUsed:overrideUsedAox,capsule,hasCredit:aoxBrowseHasCredit},useJulian)]);
+        if(fwd.isLive){
+          setDate({y:fwd.y,m:fwd.m,d:fwd.d,_fmt:fwd._fmt,_jul:fwd._jul});
+          setAoxPersistBtns(fwd.btns||{});setOverrideUsedAox(fwd.overrideUsed||false);
+          setCanOverrideCorrect(!!fwd.capsule?.canOverrideCorrect);
+          setQuestionCounted(!!fwd.capsule?.questionCounted);
+          setPendingWrongCredit(fwd.capsule?.pendingWrongCredit||null);
+          setCodesOpen(false);
+          const fc=fwd.capsule||{};
+          prevTimesSnapRef.current=fc.snapshot||null;prevStreakSnapRef.current=fc.streakSnap||null;wrongTimeRef.current=fc.wrongTime??null;
+          setInBackMode(false);setAoxBrowseHasCredit(fwd.hasCredit??false);
+        }else{
+          setDate({y:fwd.y,m:fwd.m,d:fwd.d,_fmt:fwd._fmt,_jul:fwd._jul});setAoxPersistBtns(fwd.btns||{});
+          setCodesOpen(false);setPendingWrongCredit(null);setQuestionCounted(false);
+          const cap=fwd.capsule||{};
+          prevTimesSnapRef.current=cap.snapshot||null;prevStreakSnapRef.current=cap.streakSnap||null;wrongTimeRef.current=cap.wrongTime??null;
+          setCanOverrideCorrect(cap.snapshot!=null&&!(fwd.overrideUsed||false));
+          setOverrideUsedAox(fwd.overrideUsed||false);setAoxBrowseHasCredit(fwd.hasCredit??computeHasCredit(fwd.btns));
+        }
+        
+      }
+
+      function advanceDate(newTimes,newStreak,newBest){
+        const completing=newTimes.length>=displayN;
+        wrongTimeRef.current=null;
+        // do NOT clear prevTimesSnapRef/prevStreakSnapRef here — they must survive to next date for override-after-correct
+        setCodesOpen(false);
+        setQuestionCounted(false);
+        setStreak(newStreak);setBestStreak(newBest);
+        if(!completing){
+          setDate(genDate(minY,maxY));resetAoxPB();setOverrideUsedAox(false);prevBestSnapRef.current=null;
+          if(oneByOne){setShown(false);tStartRef.current=null;}else tStartRef.current=performance.now();
+        }
+        if(completing){
+          // Save Stats: when off at run end, skip best update entirely. Run
+          // still ends and round-level stats remain visible for the user.
+          if(!saveStats){setRunPhase("done");return;}
+          const avg=newTimes.reduce((a,b)=>a+b,0)/newTimes.length;
+          const med=calcMed(newTimes);
+          const thisRoundId=nextRoundIdRef.current++;
+          const prev=bestRef.current[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+          prevBestSnapRef.current={key:bestKey,best:{...prev}};
+          const avgImp=prev.avg==null||avg<prev.avg;
+          const medImp=prev.med==null||med<prev.med;
+          bestRef.current[bestKey]={
+            avg:avgImp?avg:prev.avg,
+            avgMed:avgImp?med:prev.avgMed,
+            avgRoundId:avgImp?thisRoundId:prev.avgRoundId,
+            med:medImp?med:prev.med,
+            medAvg:medImp?avg:prev.medAvg,
+            medRoundId:medImp?thisRoundId:prev.medRoundId,
+          };
+          if(avgImp||medImp)setBestNew(p=>{const e=p[bestKey]||{avg:false,med:false};return{...p,[bestKey]:{avg:e.avg||avgImp,med:e.med||medImp}};});
+          setRunPhase("done");
+        }
+      }
+
+      function handleCorrect(idx){
+        setFlashWithTimeout({type:"good",idx});
+        if(questionCounted){
+          // wrong first — no score credit; store wrongTime so override can give credit
+          const prevBtns={...aoxPersistBtns};for(const k in prevBtns){if(prevBtns[k]==='wrong-latest')prevBtns[k]='wrong-prev';}prevBtns[idx]='correct';
+          setPendingWrongCredit({wrongTime:wrongTimeRef.current,prevDate:{...date},prevBtns,correctIdx:idx});
+          setCanOverrideCorrect(false);
+          prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;
+          setAoxStack(s=>[...s,{...date,btns:prevBtns,overrideUsed:overrideUsedAox,capsule:{snapshot:null,streakSnap:prevStreakSnapRef.current?{...prevStreakSnapRef.current}:null,wrongTime:wrongTimeRef.current},hasCredit:false}]);setAoxForwardStack([]);
+          advanceDate(times,streak,bestStreak);return;
+        }
+        // first-try correct
+        setPendingWrongCredit(null);
+        // Null-guard: if tStartRef is null (truly unreachable in normal flow), fall back to 0 rather
+        // than pushing a synthesized "now − now" zero anyway. Same defensive intent as #52: never let
+        // a missing start time silently distort averages without at least matching App's pattern.
+        const dt=tStartRef.current?(performance.now()-tStartRef.current)/1000:0;
+        prevTimesSnapRef.current=[...times];prevStreakSnapRef.current={streak,bestStreak};setCanOverrideCorrect(true);
+        const newTimes=[...times,dt];setTimes(newTimes);
+        setAttempts(a=>a+1);
+        const completing=newTimes.length>=displayN;
+        if(completing)markAoxCorrect(idx);
+        const ns=streak+1,nb=Math.max(bestStreak,ns);if(!completing){setAoxStack(s=>[...s,{...date,btns:{[idx]:'correct'},overrideUsed:overrideUsedAox,capsule:{snapshot:[...times],streakSnap:{streak,bestStreak},wrongTime:wrongTimeRef.current},hasCredit:true}]);setAoxForwardStack([]);}advanceDate(newTimes,ns,nb);
+      }
+      function handleWrong(idx){
+        setFlashWithTimeout({type:"bad",idx});
+        wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;
+        if(!questionCounted)setAttempts(a=>a+1);
+        setQuestionCounted(true);
+        prevStreakSnapRef.current={streak,bestStreak};
+        setStreak(0);setCanOverrideCorrect(false);
+        prevTimesSnapRef.current=null;setPendingWrongCredit(null);
+        markAoxWrong(idx);
+        if(!allowMistakes){markAoxCorrect(correct);setRunPhase("failed");}
+      }
+      function submitDoW(idx){if(!isRunning||isLocked||codesOpen||inBackMode)return;if(oneByOne&&!shown)return;if(idx===correct)handleCorrect(idx);else handleWrong(idx);}
+      function revealAnswer(){if(revealLocked)return;wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;markAoxCorrect(correct);setStreak(0);setCanOverrideCorrect(false);prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;setPendingWrongCredit(null);if(!questionCounted)setAttempts(a=>a+1);setQuestionCounted(true);if(!allowMistakes)setRunPhase("failed");}
+      function openCodes(){
+        if(inBackMode||runPhase==="done"){setCodesOpen(v=>!v);return;}if(codesDisabled)return;
+        if(!codesOpen){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;setCanOverrideCorrect(false);prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;setPendingWrongCredit(null);setStreak(0);if(!allowMistakes)setRunPhase("failed");if(!questionCounted)setAttempts(a=>a+1);setQuestionCounted(true);markAoxCorrect(correct);}
+        setCodesOpen(v=>!v);
+      }
+
+      function handleOverride(){
+        // === BROWSING-BACK OVERRIDE: delta-based ===
+        if(inBackMode&&canOverrideCorrect&&prevTimesSnapRef.current!=null){
+          // Undo credit for a first-try correct answer viewed while browsing back
+          setOverrideUsedAox(true);
+          const prevTimes=prevTimesSnapRef.current;
+          setTimes(prevTimes);
+          const newHC=false;setAoxBrowseHasCredit(newHC);
+          // Recalc streak from full history
+          const history=[...aoxStack.map(e=>!!e.hasCredit),newHC,...aoxForwardStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)];
+          let cs=0;for(let i=history.length-1;i>=0;i--){if(history[i])cs++;else break;}
+          let bs=0,r=0;for(const h of history){if(h){r++;if(r>bs)bs=r;}else r=0;}
+          setStreak(cs);setBestStreak(bs);
+          prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;setCanOverrideCorrect(false);
+          if(prevBestSnapRef.current&&prevBestSnapRef.current.key===bestKey){bestRef.current[bestKey]=prevBestSnapRef.current.best;setBestNew(p=>{const n={...p};delete n[bestKey];return n;});prevBestSnapRef.current=null;}
+          return;
+        }
+        if(inBackMode)return;
+        // === PATH 5: RETROACTIVE OVERRIDE OF MOST RECENT AOX STACK ENTRY ===
+        // Right→wrong only (see KNOWN LIMITATION note at aoxRetroOverrideEligible
+        // declaration). Mirrors path 1's right→wrong logic (set times back to the
+        // pre-Q snapshot, recalc streak from full history including the now-flipped
+        // entry). Live Q stays untouched. Stack entry gets override-wrong btns state
+        // and overrideUsed:true so back-navigation locks the Override button.
+        if(aoxRetroOverrideEligible){
+          setOverrideUsedAox(true);
+          const targetEntry=aoxStack[aoxStack.length-1];
+          const cap=targetEntry.capsule||{};
+          const prevTimes=cap.snapshot;
+          // Roll back times to pre-Q snapshot (removes this entry's time contribution).
+          setTimes(prevTimes);
+          // Update Best if this entry's contribution is what set it.
+          if(prevBestSnapRef.current&&prevBestSnapRef.current.key===bestKey){
+            bestRef.current[bestKey]=prevBestSnapRef.current.best;
+            setBestNew(p=>{const n={...p};delete n[bestKey];return n;});
+            prevBestSnapRef.current=null;
+          }
+          // Update stack entry: replace correct-answer marking with override-wrong.
+          const wd=(useJulian&&isJulianDate(targetEntry.y,targetEntry.m,targetEntry.d))?wdayJulian(targetEntry.y,targetEntry.m,targetEntry.d):wday(targetEntry.y,targetEntry.m,targetEntry.d);
+          const newLastEntry={...targetEntry,btns:{[wd]:'override-wrong'},overrideUsed:true,hasCredit:false};
+          const newAoxStack=[...aoxStack.slice(0,-1),newLastEntry];
+          setAoxStack(newAoxStack);
+          // Inline streak recalc using the new stack value (mirrors path 1's pattern).
+          const history=[
+            ...newAoxStack.map(e=>!!e.hasCredit),
+            ...aoxForwardStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
+          ];
+          let cs=0;for(let i=history.length-1;i>=0;i--){if(history[i])cs++;else break;}
+          let bs=0,r=0;for(const h of history){if(h){r++;if(r>bs)bs=r;}else r=0;}
+          setStreak(cs);setBestStreak(bs);
+          return;
+        }
+        setOverrideUsedAox(true);
+        // Override after first-try correct: undo credit, reset streak, end run if !allowMistakes
+        if(canOverrideCorrect&&prevTimesSnapRef.current!=null){
+          const prevTimes=prevTimesSnapRef.current;
+          const wasLastQ=prevTimes.length>=displayN-1;
+          setTimes(prevTimes);
+          setStreak(0);
+          if(prevStreakSnapRef.current)setBestStreak(prevStreakSnapRef.current.bestStreak);
+          if(prevBestSnapRef.current&&prevBestSnapRef.current.key===bestKey){bestRef.current[bestKey]=prevBestSnapRef.current.best;setBestNew(p=>{const n={...p};delete n[bestKey];return n;});prevBestSnapRef.current=null;}
+          prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;setCanOverrideCorrect(false);setQuestionCounted(true);setPendingWrongCredit(null);
+          setAoxStack(s=>s.slice(0,-1));
+          setCodesOpen(false);wrongTimeRef.current=null;
+          if(!allowMistakes){setRunPhase("failed");}
+          else if(wasLastQ){resetAoxPB();setRunPhase("running");setCodesOpen(false);setQuestionCounted(false);setOverrideUsedAox(false);setDate(genDate(minY,maxY));if(oneByOne){setShown(false);tStartRef.current=null;}else tStartRef.current=performance.now();}
+          else{resetAoxPB();setRunPhase("running");tStartRef.current=performance.now();}
+          return;
+        }
+        // Override after wrong→correct (pendingWrongCredit): give retroactive credit, restore streak
+        if(pendingWrongCredit!=null){
+          const{wrongTime,prevDate,prevBtns,correctIdx}=pendingWrongCredit;setPendingWrongCredit(null);
+          // wrongTime can be null if tStartRef was null at the original wrong-answer click. Falling back
+          // to 0 (prior behavior) distorts averages by pushing a 0s entry. Instead, synthesize a fallback
+          // from "now − current tStartRef" — non-null in normal flow since the question's still active.
+          // If tStartRef is also null (truly unreachable), 0 is the last-resort floor.
+          const dt=wrongTime??(tStartRef.current?(performance.now()-tStartRef.current)/1000:0);
+          const newTimes=[...times,dt];setTimes(newTimes);
+          const preStreak=prevStreakSnapRef.current?.streak??0;
+          const ns=preStreak+1,nb=Math.max(bestStreak,ns);setStreak(ns);setBestStreak(nb);
+          setCanOverrideCorrect(false);prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;
+          const greenOnly={[correctIdx??correct]:'correct'};
+          if(newTimes.length>=displayN){
+            const avg=newTimes.reduce((a,b)=>a+b,0)/newTimes.length;const med=calcMed(newTimes);
+            const thisRoundId=nextRoundIdRef.current++;
+            const prev=bestRef.current[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+            prevBestSnapRef.current={key:bestKey,best:{...prev}};
+            const avgImp=prev.avg==null||avg<prev.avg;
+            const medImp=prev.med==null||med<prev.med;
+            bestRef.current[bestKey]={
+              avg:avgImp?avg:prev.avg,
+              avgMed:avgImp?med:prev.avgMed,
+              avgRoundId:avgImp?thisRoundId:prev.avgRoundId,
+              med:medImp?med:prev.med,
+              medAvg:medImp?avg:prev.medAvg,
+              medRoundId:medImp?thisRoundId:prev.medRoundId,
+            };
+            if(avgImp||medImp)setBestNew(p=>{const e=p[bestKey]||{avg:false,med:false};return{...p,[bestKey]:{avg:e.avg||avgImp,med:e.med||medImp}};});
+            setAoxStack(s=>s.slice(0,-1));
+            if(prevDate)setDate({...prevDate});
+            setAoxPersistBtns(greenOnly);
+            setRunPhase("done");
+          }else{
+            setAoxStack(s=>{if(!s.length)return s;const last=s[s.length-1];return[...s.slice(0,-1),{...last,btns:greenOnly,overrideUsed:true}];});
+          }
+          return;
+        }
+        // Override after wrong (same date, running or failed): give credit, restore streak, advance
+        if(runPhase==="running"||runPhase==="failed"){
+          const dt=wrongTimeRef.current??((performance.now()-(tStartRef.current??performance.now()))/1000);
+          const preStreak=prevStreakSnapRef.current?.streak??0;
+          wrongTimeRef.current=null;prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;
+          const newTimes=[...times,dt];setTimes(newTimes);
+          const ns=preStreak+1,nb=Math.max(bestStreak,ns);
+          setCodesOpen(false);setCanOverrideCorrect(false);setPendingWrongCredit(null);
+          setAoxStack(s=>[...s,{...date,btns:{[correct]:'correct'},overrideUsed:true,capsule:{snapshot:null,streakSnap:null,wrongTime:null},hasCredit:true}]);
+          if(runPhase==="failed")setRunPhase("running");
+          const completing=newTimes.length>=displayN;
+          if(completing)markAoxCorrect(correct);
+          else{setFlashWithTimeout({type:"good",idx:correct});}
+          advanceDate(newTimes,ns,nb);
+        }
+      }
+
+      // #4 — done+inBackMode → Reset; running+inBackMode → Continue
+      const primaryBtn=runPhase==="idle"?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Begin</button>):runPhase==="done"&&inBackMode?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>):isLocked?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>):inBackMode||(!shown&&oneByOne)?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Continue</button>):(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>);
+
+      const scoreDisplay=runPhase==="idle"?"0/0":`${doneCount}/${attempts}`;
+      const accuracyDisplay=fmtAccuracyPct(doneCount,attempts);
+
+      return(
+        <div style={{display:visible?"block":"none"}}>
+          {/* Bug #5: Site-wide Save Stats pause — when saveStats is false, all AoX stat
+              boxes show "—" with strikethrough labels (matches App-side behavior). AoX stat
+              boxes never had toggle fn handlers, so no fn change needed. opacity-50 dim stays. */}
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={[
+            {label:"Score",value:scoreDisplay,off:!saveStats,fn:null},
+            {label:"Accuracy",value:accuracyDisplay,off:!saveStats,fn:null},
+            {label:"Streak",value:`${streak}/${bestStreak}`,off:!saveStats,fn:null},
+            {label:"Last",value:truncTime(calcLast(times)),off:!saveStats,fn:null},
+            {label:"Average",value:fmtTime(calcAvg(times)),off:!saveStats,fn:null},
+            {label:"Median",value:fmtTime(calcMed(times)),off:!saveStats,fn:null},
+          ]}/></div>
+          <div className="mt-3 text-xs text-purple-300/60">
+            <div className="flex flex-wrap items-start gap-4">
+              <div className="min-w-[125px]">
+                <div>Best Average: {fmtTime(bestData.avg)}{bestNew[bestKey]?.avg&&<NewBestStar/>}</div>
+                <div className="text-[11px] opacity-70">Median: {fmtTime(bestData.avgMed)}</div>
+              </div>
+              <div className="min-w-[125px]">
+                <div>Best Median: {fmtTime(bestData.med)}{bestNew[bestKey]?.med&&<NewBestStar/>}</div>
+                <div className="text-[11px] opacity-70">Average: {fmtTime(bestData.medAvg)}</div>
+              </div>
+              {bestData.avgRoundId!=null&&bestData.medRoundId!=null&&<span className="shrink-0 ml-auto">{bestData.avgRoundId===bestData.medRoundId?"Same Round":"Different Rounds"}</span>}
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-2 flex-nowrap">
+            <div className="flex items-center shrink-0"><span className={`text-sm leading-none text-purple-200/80${runPhase!=="idle"?" opacity-60":""}`}>Ao</span><input type="text" inputMode="numeric" readOnly={runPhase!=="idle"} value={aoxN} onChange={e=>{if(runPhase==="idle")setAoxN(e.target.value);}} onBlur={()=>setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))));e.currentTarget.blur();}else if(e.key==="Escape"){setAoxN(String(displayN));e.currentTarget.blur();}}} className={`panel rounded-xl px-2 py-1 w-14 text-center tabular-nums text-sm focus:outline-none shrink-0${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}/></div>
+            <button type="button" onClick={()=>{if(runPhase==="idle")setAllowMistakes(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
+            <button type="button" onClick={()=>{if(runPhase==="idle")setOneByOne(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${oneByOne?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>One-By-One</button>
+          </div>
+          <div className="mt-4 rounded-2xl panel p-4">
+            <div className="text-center relative">
+              {(inBackMode||runPhase==="done"||runPhase==="failed")&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{aoxStack.length+1}</span>}
+              <div className="text-3xl font-bold">{dateVisible?fmtDate(date.y,date.m,date.d,date._fmt):"—"}</div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
+              {DAY.map((nm,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=aoxPersistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",'surface-button');const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={nm} type="button" onClick={()=>{if(perLocked)return;submitDoW(i);}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{nm}</button>);})}
+            </div>
+          </div>
+          <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+            <div className="grid grid-cols-4 gap-2">
+              {primaryBtn}
+              <div className="col-span-1 flex gap-1">
+                <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${backDisabled?"opacity-60 pointer-events-none":""}`} onClick={goBackAox}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(aoxForwardStack.length===0||runPhase==="idle"||runPhase==="running")?"opacity-60 pointer-events-none":""}`} onClick={goForwardAox}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+              </div>
+              <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealLocked?"opacity-60 pointer-events-none":""}`} onClick={revealAnswer}>Reveal</button>
+              <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={handleOverride}>Override</button>
+            </div>
+            <button type="button" data-key="C" className={`w-full px-4 py-2 rounded-xl btn-solid text-sm font-medium ${codesDisabled&&!inBackMode?"opacity-60 pointer-events-none":""}`} onClick={openCodes}>{codesOpen?"Hide Codes":"Show Codes"}</button>
+            <Expander open={codesOpen}><div className="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5"><MethodExplanation date={aoxFrozenDate} useJulian={inBackMode?(aoxFrozenDate?._jul??useJulian):useJulian} displayedFormat={aoxFrozenDate?._fmt||dateFormat}/></div></Expander>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // App — the top-level component for all non-AoX modes
+    //
+    // Manages mode switching, per-mode preserved state (dateByMode, calcOpenByMode,
+    // preservedByModeRef, stacksByModeRef, timerDoneSnapRef), stats tracking,
+    // and all game-mode rendering (Classic/Blitz/Flash/Deduction/Lookup/How to Play).
+    // AoX has its own component (AoxMode) due to its distinct run-based lifecycle.
+    // ============================================================
+    function App(){
+      const [mode,setMode]=useState("classic");
+      // Tracks the most recent non-guide mode so the H key bind can toggle out of
+      // guide back to where the user was. Updated whenever mode changes (excluding
+      // changes INTO guide). Initial value 'classic' covers the never-left-classic case.
+      // Distinct from the unrelated prevModeRef declared further down which tracks
+      // mode changes for codes-freeze logic.
+      const prevNonGuideModeRef=useRef('classic');
+      useEffect(()=>{if(mode!=='guide')prevNonGuideModeRef.current=mode;},[mode]);
+      const modeSelectRef=useRef(null);
+      const [systemIsDark,setSystemIsDark]=useState(()=>typeof window!=="undefined"?window.matchMedia("(prefers-color-scheme: dark)").matches:true);
+      const [useSystem,setUseSystem]=useState(true);
+      const [darkTheme,setDarkTheme]=useState("dusk");
+      const [lightTheme,setLightTheme]=useState("light");
+      const [manualTheme,setManualTheme]=useState("dusk");
+
+      const activeTheme=useSystem?(systemIsDark?darkTheme:lightTheme):manualTheme;
+      useEffect(()=>{const mq=window.matchMedia("(prefers-color-scheme: dark)");const h=e=>setSystemIsDark(e.matches);mq.addEventListener("change",h);return()=>mq.removeEventListener("change",h);},[]);
+      useEffect(()=>{
+        document.documentElement.setAttribute("data-theme",activeTheme);
+        const tc=getComputedStyle(document.documentElement).getPropertyValue("--tc").trim();
+        const meta=document.querySelector("meta[name='theme-color']");
+        if(meta&&tc)meta.content=tc;
+      },[activeTheme]);
+      // Two independent stat-display toggles, each affecting a trio of boxes in the stats row:
+      //   scoringOff: hides Score / Accuracy / Streak. Display only — these stats keep
+      //     tracking in the background, and re-enabling restores the same values.
+      //   timingOff:  hides Last / Average / Median. Pauses timing entirely — c.times
+      //     stops growing while hidden (enforced by trackingOn's timingOff gate, see
+      //     above). On re-enable, if a desync exists (S.good !== S.times.length, meaning
+      //     stats updated while timing was paused), a confirmation warning is shown
+      //     (Bug #4) before the full reset fires. No-desync re-enable just regens the
+      //     date per the unanswered/burned rule. Save Stats being off shields the
+      //     toggle entirely — no regen, no reset, just visibility flip (Bug #3a).
+      const [scoringOffByMode,setScoringOffByMode]=useState({});
+      const [timingOffByMode,setTimingOffByMode]=useState({classic:true,deduction:true});
+      const scoringOff=scoringOffByMode[mode]??false;
+      const timingOff=timingOffByMode[mode]??false;
+      const toggleScoringOff=()=>{
+        // Defense in depth: when Save Stats is off, the stat box's fn is nulled (renders
+        // as <div>, not <button>) so this function should be unreachable. Kept as a safety net.
+        if(!saveStats)return;
+        setScoringOffByMode(p=>({...p,[mode]:!scoringOff}));
+      };
+      // Time stats toggle. Rules (all decisions taken on the click, before state changes):
+      //
+      //   Turn OFF: no date change, no stat reset. Just hide the timing display. (c.times
+      //     stops growing automatically via trackingOn's timingOff gate.)
+      //
+      //   Turn ON, Save Stats off: no date change, no reset (Bug #3a). Save Stats off means
+      //     stat updates were already gated, so no desync is possible — the toggle is purely
+      //     a visibility flip.
+      //
+      //   Turn ON, Save Stats on, no desync (c.good === c.times.length): no reset.
+      //     Regen date if the current Q is unanswered or Flash mid-dash. Keep date if burned
+      //     (countedWrong covers wrong/Reveal/codes-shown — all three set countedWrong=true).
+      //
+      //   Turn ON, Save Stats on, desync exists (c.good !== c.times.length): full reset of
+      //     stats + clear stacks + clear current Q state + regen date. The desync proves
+      //     calcs happened while timing was off, and Option B from spec wipes the burned
+      //     state too so the display doesn't show 0/0 stats next to a red-marked date.
+      //
+      // The destructive "Turn ON + desync → reset" case is gated by a two-tap arm/confirm
+      // pattern (Bug #4). Tap 1 arms (sets timingArmed, starts 3s timer, merges the 3 time
+      // stat boxes into a single "Enable and Reset Stats?" warning button). Tap 2 within
+      // the window confirms and fires. Timer expiry or any tap outside the warning button
+      // disarms (see the global mousedown/touchstart listener below).
+      //
+      // The old timesAtTimingOffRef snapshot is gone — state-based desync detection
+      // (S.good vs S.times.length) is exact and doesn't depend on captured-played counts,
+      // which missed Override paths that change c.good without touching c.played.
+      const performTimingOn=({reset})=>{
+        if(reset){
+          resetStatsCurrent();
+          setStack([]);setForwardStack([]);setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());setBackDepth(0);
+          resetPB();
+          setLocked(false);setRevealed(false);setCountedWrong(false);setCanOverrideCorrect(false);
+          setPendingWrongOverride(null);setOverrideUsedThisQ(false);
+          setCalcPenalty(false);setCalcOpen(false);
+          wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current=null;
+        }
+        const flashMidDate=mode==='flash'&&active;
+        const isBurned=countedWrong||revealed;
+        // Regen if reset happened (state is now clean), if Q is unanswered, or if Flash mid-dash.
+        if(reset||!isBurned||flashMidDate){
+          setDate(genDate(minY,maxY));
+          if(mode==="deduction")spawnDed();
+          tStartRef.current=performance.now();
+        }
+        if(flashMidDate){
+          clearTimeout(flashTimerRef.current);flashTimerRef.current=null;
+          setFlashPhase("dash");flashDeadlineRef.current=null;
+          setFlashRemainMs(flashMs);resetFlashBar();
+          setActive(false);setShowTimerDate(false);
+        }
+        setTimingOffByMode(p=>({...p,[mode]:false}));
+      };
+      const toggleTimingOff=()=>{
+        // Defense in depth: when Save Stats is off, the stat box's fn is nulled (renders
+        // as <div>, not <button>) so this function should be unreachable. Kept as a safety net.
+        if(!saveStats)return;
+        const currentlyOff=timingOffByMode[mode]??false;
+        if(!currentlyOff){
+          // Turn OFF: no date change, no reset.
+          setTimingOffByMode(p=>({...p,[mode]:true}));
+          return;
+        }
+        // Turn ON path.
+        const desync=S.good!==S.times.length;
+        if(!desync){
+          performTimingOn({reset:false});
+          return;
+        }
+        // Desync exists — destructive. Arm or fire.
+        if(timingArmedRef.current){
+          if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}
+          timingArmedRef.current=false;
+          setTimingArmed(false);
+          performTimingOn({reset:true});
+          return;
+        }
+        timingArmedRef.current=true;
+        setTimingArmed(true);
+        if(timingArmTimerRef.current)clearTimeout(timingArmTimerRef.current);
+        timingArmTimerRef.current=setTimeout(()=>{
+          timingArmedRef.current=false;setTimingArmed(false);timingArmTimerRef.current=null;
+        },3000);
+      };
+      const disarmTimingArm=()=>{
+        if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}
+        timingArmedRef.current=false;
+        setTimingArmed(false);
+      };
+      // Bug #3b: Save Stats toggle wrapper. When turning ON (off→on) AND time stats are
+      // currently visible AND we're in a hideable mode (Classic/Deduction/Flash), apply the
+      // standard unanswered/burned regen rule: regen if unanswered or Flash mid-dash; keep
+      // if burned. Blitz and AoX have their own setting-change reset logic (Cat B for
+      // active rounds) and are unaffected here. Turning Save Stats OFF or turning it ON
+      // while time stats are hidden does nothing to the date.
+      const toggleSaveStats=()=>{
+        const turningOn=!saveStats;
+        const timingVisible=["classic","deduction","flash"].includes(mode)&&!(timingOffByMode[mode]??false);
+        if(turningOn&&timingVisible){
+          const flashMidDate=mode==='flash'&&active;
+          const isBurned=countedWrong||revealed;
+          if(!isBurned||flashMidDate){
+            setDate(genDate(minY,maxY));
+            if(mode==='deduction')spawnDed();
+            tStartRef.current=performance.now();
+          }
+          if(flashMidDate){
+            clearTimeout(flashTimerRef.current);flashTimerRef.current=null;
+            setFlashPhase("dash");flashDeadlineRef.current=null;
+            setFlashRemainMs(flashMs);resetFlashBar();
+            setActive(false);setShowTimerDate(false);
+          }
+        }
+        setSaveStats(v=>!v);
+      };
+      const [minY,setMinY]=useState(1),[maxY,setMaxY]=useState(10000);
+      const [minInputVal,setMinInputVal]=useState("1");
+      const [maxInputVal,setMaxInputVal]=useState("10000");
+      const minInputRef=useRef(null),maxInputRef=useRef(null);
+      // Every date carries a stamped _fmt — when randomFormat is on it's a random
+      // roll, when off it's the current dateFormat. The display layer always trusts
+      // _fmt (so the visible format on a live date is whatever was stamped at generation,
+      // not the current setting).
+      // Bug #1: format setting changes (Random Format toggle OR Date Format dropdown)
+      // always regen any UNANSWERED date across all stored modes (Classic, Flash, Blitz
+      // pre-round, Deduction per sub-type, AoX idle). Burned dates (countedWrong covers
+      // wrong/Reveal/codes-shown) are preserved exactly as left until the user advances.
+      // The previous _fmt-mismatch gate has been removed — any format setting change
+      // regens if unanswered, regardless of whether the visible format would actually
+      // differ. See regenDecisionFor in the App popover effect for the full ruleset and
+      // the matching AoX-side effect at the top of AoxMode.
+      // This lazy initializer can't reference randomFormat/dateFormat state because they
+      // are declared later in the component. Hardcoded values mirror those useState
+      // defaults (randomFormat=true → rollFormat(); useJulian=true). If those defaults
+      // change, update both.
+      // dateByMode intentionally only holds entries for classic/blitz/flash. Deduction
+      // tracks its puzzle in a separate `ded` state (Year/Month/Day sub-modes have
+      // distinct layouts); AoX is its own component with its own date state; Lookup
+      // has no current-date concept. setDateByMode callers fall back defensively via
+      // `prev[mode]??prev.classic`. Don't add entries for those modes here — they
+      // would create dead state that's never read.
+      const [dateByMode,setDateByMode]=useState(()=>{
+        const mk=()=>{const d=randomDate(1,10000);d._fmt=rollFormat();d._jul=false;return d;};
+        return{classic:mk(),blitz:mk(),flash:mk()};
+      });
+      const date=dateByMode[mode]??dateByMode.classic;
+      const setDate=valOrFn=>setDateByMode(prev=>({...prev,[mode]:typeof valOrFn==='function'?valOrFn(prev[mode]??prev.classic):valOrFn}));
+      // dedStack and dedForwardStack are keyed by sub-type ('day'|'month'|'year') so each
+      // sub-type has its own independent history. Back/Forward only walks the current
+      // sub-type's entries, and Reset Stats clears only the current sub-type's stack.
+      const blankDedStacks=()=>({day:[],month:[],year:[]});
+      const [stack,setStack]=useState([]),[dedStack,setDedStack]=useState(blankDedStacks);
+      const [forwardStack,setForwardStack]=useState([]);
+      const [dedForwardStack,setDedForwardStack]=useState(blankDedStacks);
+      const [useJulian,setUseJulian]=useState(true);
+      const [saveStats,setSaveStats]=useState(true);
+      // Per-question freeze: captures the saveStats value at the moment of the
+      // first stat-affecting action on the current question. Reset to null on
+      // advance to next question. effectiveSaveStats() returns the frozen value
+      // when set, otherwise the live toggle. This implements the per-question
+      // freeze rule: once you make a wrong (or correct) on a question, toggling
+      // Save Stats afterward doesn't change that question's outcome.
+      const saveStatsThisQRef=useRef(null);
+      const isPerQGated=()=>mode==="classic"||mode==="flash"||mode==="deduction";
+      const effectiveSaveStats=()=>saveStatsThisQRef.current===null?saveStats:saveStatsThisQRef.current;
+      const freezeSaveStatsForQ=()=>{if(saveStatsThisQRef.current===null)saveStatsThisQRef.current=saveStats;};
+      const [overrideUsedThisQ,setOverrideUsedThisQ]=useState(false);
+      const [backDepth,setBackDepth]=useState(0);
+      const [browseHasCredit,setBrowseHasCredit]=useState(false);
+      const [timerDone,setTimerDone]=useState(false);
+      // Bug #4: two-tap arm/confirm pattern for the destructive "Turn timing ON + desync"
+      // case. Mirrors Full Reset's pattern. The 3 time stat boxes visually merge into a
+      // single "Enable and Reset Stats?" warning button when armed. timingArmedRef is the
+      // synchronous twin of timingArmed state — needed because toggleTimingOff reads/writes
+      // armed status on the same click and React state updates are async.
+      const [timingArmed,setTimingArmed]=useState(false);
+      const timingArmedRef=useRef(false);
+      const timingArmTimerRef=useRef(null);
+      const timingArmBtnRef=useRef(null);
+      const activeWday=(y,m,d)=>(useJulian&&isJulianDate(y,m,d))?wdayJulian(y,m,d):wday(y,m,d);
+      const dimFn=(y,m)=>{const leap=(useJulian&&isJulianDate(y,m,1))?isLeapJulian(y):isLeap(y);return m===2?(leap?29:28):([4,6,9,11].includes(m)?30:31);};
+      const correct=useMemo(()=>activeWday(date.y,date.m,date.d),[date,useJulian]);const correctRef=useRef(correct);correctRef.current=correct;
+      const [locked,setLocked]=useState(false);
+      const [revealed,setRevealed]=useState(false);
+      const [countedWrong,setCountedWrong]=useState(false);
+      const [canOverrideCorrect,setCanOverrideCorrect]=useState(false);
+      const [pendingWrongOverride,setPendingWrongOverride]=useState(null);
+      const preCalcPenaltySnapshotRef=useRef(null);
+      const [calcOpenByMode,setCalcOpenByMode]=useState({});
+      const calcOpen=calcOpenByMode[mode]??false;
+      const setCalcOpen=v=>setCalcOpenByMode(p=>({...p,[mode]:typeof v==="function"?v(p[mode]??false):v}));
+      const [calcPenaltyActive,setCalcPenaltyActive]=useState(false);
+      const prevStatsSnapshotRef=useRef(null);
+      const [savedDedByType,setSavedDedByType]=useState(()=>blankDedTypeStore());
+      const blankStats=()=>({played:0,good:0,streak:0,best:0,times:[]});
+      // Comparison helpers used by isFullyReset (Full Reset dim/lock check).
+      // Each returns true iff its argument equals the structure blank*() would produce.
+      // Cheap object/array shape checks — safe to call on every render.
+      const isBlankStats=s=>!!s&&s.played===0&&s.good===0&&s.streak===0&&s.best===0&&Array.isArray(s.times)&&s.times.length===0;
+      const isBlankDedStacks=d=>!!d&&Array.isArray(d.day)&&d.day.length===0&&Array.isArray(d.month)&&d.month.length===0&&Array.isArray(d.year)&&d.year.length===0;
+      const isBlankDedTypeStore=d=>!!d&&d.year===null&&d.month===null&&d.day===null;
+      // isFreshDedSnap — true if a saved Deduction snapshot represents an UNTOUCHED puzzle
+      // (no answers, not counted-wrong, not locked, not revealed) or is empty. Mirrors the
+      // mode-switch isFreshDedSub helper. Used by isFullyReset so merely VISITING a Deduction
+      // sub-mode and leaving (which saves the auto-generated unanswered puzzle) still counts as
+      // a fresh launch state — matching how Classic/Flash preserved-but-untouched state is ignored.
+      const isFreshDedSnap=sd=>{if(!sd||!sd.ded)return true;const b=sd.ded.btns||sd.btns||{};return Object.keys(b).length===0&&!sd.countedWrong&&!sd.locked&&!sd.revealed;};
+      const [statsByMode,setStatsByMode]=useState({classic:blankStats(),blitz:blankStats(),flash:blankStats(),"deduction-day":blankStats(),"deduction-month":blankStats(),"deduction-year":blankStats()});
+      const [blitzRoundStats,setBlitzRoundStats]=useState(()=>blankStats());
+      const [dedType,setDedType]=useState("day");
+      // Per-mode Deduction toggles — NOT in settings popover, mode-specific to Deduction
+      const [abCrossOnly,setAbCrossOnly]=useState(false);   // Year sub-mode: force window to cross an ab boundary (year ending in 00)
+      const [julCrossOnly,setJulCrossOnly]=useState(false); // Year sub-mode: force window to cross Oct 15, 1582 boundary (Julian only, N=2)
+      const [monthOnly1582,setMonthOnly1582]=useState(false);// Month sub-mode: force yc=1582 (Julian only)
+      const statKey=mode==="deduction"?`deduction-${dedType}`:mode;
+      const S=statsByMode[statKey]||blankStats();
+      const tStartRef=useRef(null);
+      const wrongTimeRef=useRef(null);
+      const [flash,setFlash]=useState(null);
+      // Same latest-timeout pattern as AoX — see comment there. Used at all setFlash sites in App.
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const [persistBtns,setPersistBtns]=useState({});
+      const markWrong=idx=>setPersistBtns(prev=>markBtns(prev,idx,'wrong-latest'));
+      const markCorrect=idx=>setPersistBtns(prev=>markBtns(prev,idx,'correct'));
+      const resetPB=()=>setPersistBtns({});
+      const [blitzBest,setBlitzBest]=useState({});
+      const [blitzBestNew,setBlitzBestNew]=useState({});// {[key]:{score:bool,streak:bool}}
+      const [suddenBestNew,setSuddenBestNew]=useState({});// {[key]:bool}
+      const [suddenBest,setSuddenBest]=useState({});
+      const suddenBestSnapRef=useRef(null);
+      const [allowMistakes,setAllowMistakes]=useState(true);
+      const [perQ,setPerQ]=useState(false);
+      const blitzConfigPrevRef=useRef({perQ:false,allowMistakes:true});
+      const blitzRoundIdRef=useRef(1);
+      // currentBlitzRoundIdRef holds the id of the round currently in the timerDone
+      // state (i.e., the round whose history is on screen for retro-override). Set
+      // by the timerDone useEffect when a round ends. Read by Path 1 / Path 5 /
+      // recalcStreak's Blitz-best update sites to decide whether the saved Best
+      // Score / Best Streak belongs to THIS round (rollback applies) or to an
+      // earlier round (rollback skipped — saved value belongs to a different round
+      // and lowering it would be wrong).
+      //
+      // Without this gate, retro-override compared the saved best to the current
+      // round's stats. When this round tied an earlier round's best, the heuristic
+      // falsely said "saved best came from this round" and overwrote the value
+      // belonging to the earlier round. Example: prior round set best of 4; this
+      // round also scored 4 (Math.max kept the saved 4); retro-override on this
+      // round dropped the saved best to 3 even though the earlier round's 4 was
+      // still legitimately the best score on record.
+      const currentBlitzRoundIdRef=useRef(null);
+      const blitzDisplayRef=useRef({width:"100%",text:""});
+      const suddenDisplayRef=useRef({width:"100%",text:""});
+      const [blitzSec,setBlitzSec]=useState(60),[blitzRemain,setBlitzRemain]=useState(60),[blitzRunning,setBlitzRunning]=useState(false);
+      const blitzStartRef=useRef(null),blitzPausedAtRef=useRef(null),blitzPausedAccRef=useRef(0);
+      const blitzRemainRef=useRef(60);
+      const blitzBarRef=useRef(null),blitzTimeRef=useRef(null);
+      const [qSec,setQSec]=useState(5),[qRemain,setQRemain]=useState(5);
+      const qDeadlineRef=useRef(null),qPausedAtRef=useRef(null),qPausedAccRef=useRef(0);
+      const suddenBarRef=useRef(null),suddenTimeRef=useRef(null);
+      const [active,setActive]=useState(false);
+      const [showTimerDate,setShowTimerDate]=useState(false);
+      const [flashMs,setFlashMs]=useState(500);
+      const [flashPhase,setFlashPhase]=useState("dash");
+      const flashTimerRef=useRef(null);
+      const [flashRemainMs,setFlashRemainMs]=useState(500);
+      const flashDeadlineRef=useRef(null);
+      const flashBarRef=useRef(null);
+      const endFlashPhase=useCallback(()=>{setFlashPhase("hide");flashDeadlineRef.current=null;setFlashRemainMs(0);flashTimerRef.current=null;},[]);
+      const [ded,setDed]=useState(null);
+      const getDedCorrectIdx=()=>{if(!ded)return-1;if(ded.type==="year")return ded.options.findIndex(y=>y===ded.y);if(ded.type==="month"){if(ded.boxes)return ded.boxes.findIndex(b=>b.months.includes(ded.m));return ded.options.findIndex(m=>m===ded.m);}return ded.options.findIndex(d=>d===ded.d);};
+      // dedCorrectIdxFor — same as getDedCorrectIdx but for an arbitrary stack entry,
+      // not the live `ded`. Stack entries never have .boxes (boxes are spawn-time
+      // construction artifacts), so the month branch always uses findIndex.
+      const dedCorrectIdxFor=e=>e.type==="year"?e.options.findIndex(y=>y===e.y):e.type==="month"?e.options.findIndex(m=>m===e.m):e.options.findIndex(d=>d===e.d);
+      const [dedFlash,setDedFlash]=useState(null);
+      // Same latest-timeout pattern as flash — used at all setDedFlash call sites.
+      const dedFlashClearRef=useRef(null);
+      const setDedFlashWithTimeout=val=>{setDedFlash(val);if(dedFlashClearRef.current)clearTimeout(dedFlashClearRef.current);dedFlashClearRef.current=setTimeout(()=>{setDedFlash(null);dedFlashClearRef.current=null;},FLASH_MS);};
+      const [lookupHistory,setLookupHistory]=useState([]);
+      const [lookupInput,setLookupInput]=useState("");
+      const [lookupOutput,setLookupOutput]=useState("");
+      const [lookupCalcDate,setLookupCalcDate]=useState(null);
+      const [lookupSelectedHistoryId,setLookupSelectedHistoryId]=useState(null);
+      const [lookupCalcOpen,setLookupCalcOpen]=useState(false);
+      // #6 — removed prevLookupCalcKeyRef and its effect; lookup Show Codes now only closes
+      // when runLookup() fires a new result or the user manually closes it.
+      const pendingDedSwitchRef=useRef(null);
+      const prevModeRef=useRef(mode);const prevModeForSwitchRef=useRef(mode);const timerDoneSnapRef=useRef(null);const preservedByModeRef=useRef({});const stacksByModeRef=useRef({});
+      // Bar height tracking. The htp-sticky-bar is position:fixed (chrome-style fixed
+      // element above everything), so it has no natural effect on the flow of the
+      // appScrollRef container below it. We measure the bar's offsetHeight here and
+      // write it to a CSS custom property (--bar-h) on the document root; the scroll
+      // container reads it via padding-top:var(--bar-h) so its content starts below
+      // the bar instead of being covered by it. ResizeObserver fires on initial mount
+      // and any time the bar's height changes (e.g., mode switch flips pb-2.5 in
+      // guide mode vs none in game modes, or content reflows). Writing to a CSS
+      // variable instead of JS-applying padding directly keeps the styling
+      // declarative and avoids React state churn for a value that's not part of
+      // application logic.
+      const htpStickyBarRef=useRef(null);
+      useEffect(()=>{
+        const el=htpStickyBarRef.current;if(!el)return;
+        const updateBarH=()=>{document.documentElement.style.setProperty('--bar-h',`${el.offsetHeight}px`);};
+        updateBarH();
+        const ro=new ResizeObserver(updateBarH);
+        ro.observe(el);
+        return()=>ro.disconnect();
+      },[]);
+      // App-wide scroll-state tracking on the confined scroll container (appScrollRef).
+      // Container scrolls when content overflows the viewport-below-bar (always in HtP,
+      // and in any mode where content can't fit at the current viewport size).
+      //   appScrolledFromTop → bar's elev-shadow-down + container's fade-scroll-top
+      //   appAtBottom         → container's fade-scroll-bottom
+      // Defaults: appAtBottom true / appScrolledFromTop false (no indicators on first
+      // paint before scroll state is evaluated). The listener runs on every mode change
+      // so it picks up the container ref and re-evaluates against new content. Inner
+      // scrollables (popover, lookup) track their own scroll state independently.
+      const appScrollRef=useRef(null);
+      const [appAtBottom,setAppAtBottom]=useState(true);
+      const [appScrolledFromTop,setAppScrolledFromTop]=useState(false);
+      useEffect(()=>{
+        const el=appScrollRef.current;if(!el)return;
+        const evaluate=()=>{
+          const scrollTop=el.scrollTop;
+          const scrollHeight=el.scrollHeight;
+          const clientHeight=el.clientHeight;
+          const noOverflow=scrollHeight<=clientHeight+1;
+          setAppAtBottom(noOverflow||scrollTop+clientHeight>=scrollHeight-4);
+          setAppScrolledFromTop(!noOverflow&&scrollTop>0);
+        };
+        evaluate();
+        el.addEventListener('scroll',evaluate,{passive:true});
+        const ro=new ResizeObserver(evaluate);
+        ro.observe(el);
+        return()=>{el.removeEventListener('scroll',evaluate);ro.disconnect();};
+      },[mode]);
+      // Mode-change effect: reset the scroll container to top on every mode switch.
+      // Without this, switching from HtP (where the user scrolled) into a game mode
+      // would leave the container at its previous scrollTop, hiding the top of the
+      // mode's content. Runs after evaluate() above to ensure a clean visual transition.
+      useEffect(()=>{const el=appScrollRef.current;if(el)el.scrollTop=0;},[mode]);
+      // BFCache scroll reset (defense-in-depth alongside position:fixed #root).
+      // Multiple events + deferred resets cover edge cases where pageshow alone isn't reliable
+      // on iOS Safari. visibilitychange catches tab-foreground transitions; rAF + setTimeout
+      // catch late scroll restorations that happen after the initial event fires. Resets
+      // both the window/body scroll (defense-in-depth — body has overflow:hidden so it
+      // can't scroll, but BFCache might try anyway) AND the inner container (the actual
+      // scroll surface that the user interacts with).
+      useEffect(()=>{const reset=()=>{window.scrollTo(0,0);if(document.documentElement.scrollTop!==0)document.documentElement.scrollTop=0;if(document.body.scrollTop!==0)document.body.scrollTop=0;if(appScrollRef.current)appScrollRef.current.scrollTop=0;};const onPageShow=()=>{reset();requestAnimationFrame(reset);setTimeout(reset,0);};const onVisChange=()=>{if(document.visibilityState==='visible'){reset();requestAnimationFrame(reset);}};reset();window.addEventListener('pageshow',onPageShow);document.addEventListener('visibilitychange',onVisChange);return()=>{window.removeEventListener('pageshow',onPageShow);document.removeEventListener('visibilitychange',onVisChange);};},[]);
+      // Keyboard input — desktop convenience, mobile-no-op.
+      // Three categories of keys are handled, all subject to the same gates: not in
+      // an input/textarea/contentEditable, no modifiers held (Cmd+L stays browser),
+      // not a key repeat or IME composition.
+      //
+      // 1. Number keys 0–9 trigger the visible answer-grid button at that 0-based
+      //    index, left-to-right and top-to-bottom. Indexing matches the book's day
+      //    codes (Sun=0 ... Sat=6) for day grids; positional for Deduction Month/Year.
+      // 2. Letters (case-insensitive) and ArrowLeft/Right walk the DOM for a button
+      //    with matching data-key attribute and click the first one that's both
+      //    visible (offsetParent != null) and not locked (no pointer-events-none class).
+      //    Game-loop binds: N (New/Begin/Reset), R (Reveal), O (Override), C (Show/Hide
+      //    Codes), S (Reset Stats), ← Back, → Forward.
+      // 3. Special direct-action keys, no DOM button needed:
+      //    - Mode switching: K Classic, F Flash, B Blitz, A AoX, D Deduction, L Lookup
+      //    - H toggles to/from guide (returns to prevNonGuideModeRef when leaving guide)
+      //    - G toggles the settings popover
+      //
+      // All keyboard activations bypass CSS pointer-events via .click(), so the
+      // pointer-events-none className check is mandatory to mirror real-click locks.
+      useEffect(()=>{const onKey=e=>{
+        if(e.repeat||e.isComposing)return;
+        // Tab: toggle the mode selector dropdown. Plain Tab only — Ctrl+Tab, Ctrl+Shift+Tab,
+        // Shift+Tab, Alt+Tab all pass through to the browser. Works universally, including
+        // when an input is focused (Esc/Enter already blur inputs, so the standard "leave
+        // this input" role of Tab is unneeded). focus() before click() so the dropdown's
+        // arrow-nav handler (handleTriggerKeyDown on the trigger) sees subsequent keys.
+        if(e.key==='Tab'){
+          if(e.ctrlKey||e.metaKey||e.altKey||e.shiftKey)return;
+          if(modeSelectRef.current){
+            const trigger=modeSelectRef.current.querySelector('button');
+            if(trigger){e.preventDefault();trigger.focus();trigger.click();}
+          }
+          return;
+        }
+        if(e.ctrlKey||e.metaKey||e.altKey||e.shiftKey)return;
+        const k=e.key;
+        const ae=document.activeElement;
+        if(ae){const tag=ae.tagName;if(tag==='INPUT'||tag==='TEXTAREA'||ae.isContentEditable)return;}
+        // Category 1: 0–9 → answer grid
+        if(k>='0'&&k<='9'){
+          const grids=document.querySelectorAll('[data-answer-grid="true"]');
+          let visible=null;
+          for(const g of grids){if(g.offsetParent!==null){visible=g;break;}}
+          if(!visible)return;
+          const idx=parseInt(k,10);
+          const btn=visible.children[idx];
+          if(!btn||btn.tagName!=='BUTTON')return;
+          if(btn.className.includes('pointer-events-none'))return;
+          e.preventDefault();
+          btn.click();
+          return;
+        }
+        // Determine target key string for letters and arrows
+        let dataKey=null;
+        if(k==='ArrowLeft')dataKey='ArrowLeft';
+        else if(k==='ArrowRight')dataKey='ArrowRight';
+        else if(k.length===1){const upper=k.toUpperCase();if(upper>='A'&&upper<='Z')dataKey=upper;}
+        if(!dataKey)return;
+        // Category 3a: mode switching — direct setMode (no DOM button per mode)
+        const MODE_KEYS={K:'classic',F:'flash',B:'blitz',A:'aox',D:'deduction',L:'lookup'};
+        if(MODE_KEYS[dataKey]){e.preventDefault();setMode(MODE_KEYS[dataKey]);setSettingsOpen(false);return;}
+        // Category 3b: H — toggle to/from guide, preserving previous non-guide mode
+        if(dataKey==='H'){e.preventDefault();setMode(m=>m==='guide'?(prevNonGuideModeRef.current||'classic'):'guide');setSettingsOpen(false);return;}
+        // Category 3c: G — toggle settings popover
+        if(dataKey==='G'){e.preventDefault();setSettingsOpen(v=>!v);return;}
+        // Category 2: data-key DOM walk for game-loop letters and arrows
+        const tagged=document.querySelectorAll(`[data-key="${dataKey}"]`);
+        for(const btn of tagged){
+          if(btn.tagName!=='BUTTON')continue;
+          if(btn.offsetParent===null)continue;
+          if(btn.className.includes('pointer-events-none'))continue;
+          e.preventDefault();
+          btn.click();
+          return;
+        }
+      };window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[]);
+      const updateStats=mutator=>{if(isPerQGated()){freezeSaveStatsForQ();if(!saveStatsThisQRef.current)return;}const sk=mode==="deduction"?`deduction-${dedType}`:mode;setStatsByMode(prev=>{const es={...(prev[sk]||blankStats())};mutator(es);return{...prev,[sk]:es};});};
+      const resetStatsCurrent=()=>{const sk=mode==="deduction"?`deduction-${dedType}`:mode;setStatsByMode(prev=>({...prev,[sk]:blankStats()}));};
+      const setCalcPenalty=v=>setCalcPenaltyActive(v);
+      function applyMinValue(val){if(val!==minY)setMinY(val);}
+      function applyMaxValue(val){if(val!==maxY)setMaxY(val);}
+      const commitMin=()=>{const p=parseInt(minInputVal);if(isNaN(p)){setMinInputVal(String(minY));return;}const v=Math.max(1,Math.min(maxY,p));applyMinValue(v);setMinInputVal(String(v));};
+      const commitMax=()=>{const p=parseInt(maxInputVal);if(isNaN(p)){setMaxInputVal(String(maxY));return;}const v=Math.max(minY,Math.min(10000,p));applyMaxValue(v);setMaxInputVal(String(v));};
+      useEffect(()=>{if(document.activeElement===minInputRef.current)return;setMinInputVal(String(minY));},[minY]);
+      useEffect(()=>{if(document.activeElement===maxInputRef.current)return;setMaxInputVal(String(maxY));},[maxY]);
+      function resetFlashBar(){if(flashBarRef.current){flashBarRef.current.style.transition="none";flashBarRef.current.style.width="100%";}}
+      function startFlashBar(ms){requestAnimationFrame(()=>{if(!flashBarRef.current)return;const s=flashBarRef.current;s.style.transition="none";s.style.width="100%";s.getBoundingClientRect();s.style.transition=`width ${ms}ms linear`;s.style.width="0%";});}
+      useEffect(()=>{const onVis=()=>{const now=performance.now();if(document.hidden){if(blitzRunning&&blitzPausedAtRef.current==null)blitzPausedAtRef.current=now;if(qDeadlineRef.current&&qPausedAtRef.current==null)qPausedAtRef.current=now;}else{if(blitzPausedAtRef.current!=null){blitzPausedAccRef.current+=now-blitzPausedAtRef.current;blitzPausedAtRef.current=null;}if(qPausedAtRef.current!=null){qPausedAccRef.current+=now-qPausedAtRef.current;qPausedAtRef.current=null;}}};document.addEventListener("visibilitychange",onVis);return()=>document.removeEventListener("visibilitychange",onVis);},[blitzRunning]);
+      useEffect(()=>{
+        const need=blitzRunning||(mode==="blitz"&&perQ&&qDeadlineRef.current)||(mode==="flash"&&active&&flashPhase==="show");
+        if(!need)return;let raf;
+        const loop=()=>{
+          const now=performance.now();
+          if(blitzRunning&&blitzStartRef.current){const t=(now-blitzStartRef.current-blitzPausedAccRef.current)/1000;const r=Math.max(0,blitzSec-t);blitzRemainRef.current=r;const w=Math.max(0,Math.min(100,(r/blitzSec)*100))+"%";blitzDisplayRef.current.width=w;const tx=fmtBlitzT(r);blitzDisplayRef.current.text=tx;if(blitzBarRef.current)blitzBarRef.current.style.width=w;if(blitzTimeRef.current)blitzTimeRef.current.textContent=tx;if(r<=.001){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setActive(false);setShowTimerDate(true);setTimerDone(true);markCorrect(correctRef.current);setLocked(true);}}
+          if(mode==="blitz"&&perQ&&qDeadlineRef.current){const r=Math.max(0,(qDeadlineRef.current+qPausedAccRef.current-now)/1000);const w=(qSec>0?Math.max(0,Math.min(100,(r/qSec)*100)):100)+"%";suddenDisplayRef.current.width=w;const tx=Math.ceil(r)+"s";suddenDisplayRef.current.text=tx;if(suddenBarRef.current)suddenBarRef.current.style.width=w;if(suddenTimeRef.current)suddenTimeRef.current.textContent=tx;if(r<=.001){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;updateStats(c=>{c.played+=1;c.streak=0;});markCorrect(correctRef.current);setActive(false);setShowTimerDate(true);setTimerDone(true);setCanOverrideCorrect(false);setPendingWrongOverride(null);}}
+          if(mode==="flash"&&active&&flashPhase==="show"&&flashDeadlineRef.current)setFlashRemainMs(Math.max(0,flashDeadlineRef.current-now));
+          raf=requestAnimationFrame(loop);
+        };
+        raf=requestAnimationFrame(loop);return()=>cancelAnimationFrame(raf);
+      },[mode,blitzSec,qSec,blitzRunning,active,flashPhase]);
+      // trackingOn gates appending solve times to c.times. Returns false when timing
+      // stats are hidden in modes that allow it (Classic/Deduction/Flash) — this
+      // enforces the "no times recorded while hidden" contract documented at the
+      // timingOff declaration above. Blitz and AoX have no timing toggle, so they
+      // always track. Without this gate, c.times keeps growing while timing is
+      // hidden, and a desync (c.good > c.times.length) emerges on re-enable.
+      const trackingOn=()=>{
+        if(!["classic","blitz","flash","deduction"].includes(mode))return false;
+        if(["classic","deduction","flash"].includes(mode)&&(timingOffByMode[mode]??false))return false;
+        return true;
+      };
+      // arm() is the canonical mode-arrival reset for Classic/Flash/Deduction/Blitz state.
+      // Resets every transient question-state value: locked, revealed, countedWrong,
+      // calcPenaltyActive, flash, etc. If a new piece of question state is
+      // added that should not survive a mode change, reset it here.
+      const arm=()=>{resetPB();setActive(false);setShowTimerDate(false);setFlash(null);setLocked(false);setRevealed(false);setCountedWrong(false);setCanOverrideCorrect(false);setPendingWrongOverride(null);setOverrideUsedThisQ(false);setCalcPenalty(false);setBackDepth(0);setTimerDone(false);setStack([]);setForwardStack([]);setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());if(mode==="blitz")resetStatsCurrent();if(mode==="blitz"){setBlitzBestNew({});setSuddenBestNew({});}setBlitzRemain(blitzSec);blitzRemainRef.current=blitzSec;blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setBlitzRunning(false);if(mode==="blitz")setBlitzRoundStats(blankStats());qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setQRemain(qSec);clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;setFlashRemainMs(flashMs);resetFlashBar();tStartRef.current=null;wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;saveStatsThisQRef.current=null;preCalcPenaltySnapshotRef.current=null;if(blitzBarRef.current)blitzBarRef.current.style.width="100%";if(blitzTimeRef.current)blitzTimeRef.current.textContent=fmtBlitzT(blitzSec);if(suddenBarRef.current)suddenBarRef.current.style.width="100%";if(suddenTimeRef.current)suddenTimeRef.current.textContent=qSec+"s";};
+      const begin=()=>{
+        setActive(true);setShowTimerDate(false);setLocked(false);setRevealed(false);setCountedWrong(false);setCanOverrideCorrect(false);if(mode==="blitz")resetStatsCurrent();if(mode==="blitz"&&!perQ){blitzStartRef.current=performance.now();blitzPausedAccRef.current=0;blitzPausedAtRef.current=null;setBlitzRunning(true);setBlitzRemain(blitzSec);blitzRemainRef.current=blitzSec;setBlitzRoundStats(blankStats());}if(mode==="blitz"&&perQ){const now=performance.now();qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}if(mode==="flash"){setFlashPhase("show");clearTimeout(flashTimerRef.current);const now=performance.now();flashDeadlineRef.current=now+flashMs;setFlashRemainMs(flashMs);flashTimerRef.current=setTimeout(endFlashPhase,Math.max(50,flashMs));startFlashBar(flashMs);}tStartRef.current=performance.now();pushAndNext();
+      };
+      // setCalcOpen(false) is included in the batch so the date change (via spawnDed) lands
+      // in the same React update as the panel close — required by the freeze contract in
+      // MethodBreakdownSection. Mirrors pushAndNext's pattern for Classic/Flash/Blitz.
+      function runDeductionRound(btnsForStack){const finalBtns=btnsForStack??{...persistBtns};const wasAnswered=Object.keys(finalBtns).length>0;const wasSaved=effectiveSaveStats();if(wasAnswered&&wasSaved){const capsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};setDedStack(s=>ded?({...s,[dedType]:[...(s[dedType]||[]),entryWithGreen({...ded,btns:finalBtns,overrideUsed:false,capsule,hasCredit:computeHasCredit(finalBtns)},useJulian)]}):s);}setDedForwardStack(s=>({...s,[dedType]:[]}));spawnDed();setRevealed(false);setLocked(false);setCountedWrong(false);setCanOverrideCorrect(false);setOverrideUsedThisQ(false);setBackDepth(0);setCalcPenalty(false);setCalcOpen(false);wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;saveStatsThisQRef.current=null;resetPB();}
+      function pushAndNext(btnsForStack){
+        if(["classic","flash","blitz"].includes(mode)){
+          const finalBtns=btnsForStack??{...persistBtns};
+          const wasAnswered=Object.keys(finalBtns).length>0;
+          // Per-Q gating: Classic/Flash skip stack push when frozen Save Stats
+          // is OFF for this question. Blitz always pushes (round-level history).
+          const wasSaved=mode==="blitz"||effectiveSaveStats();
+          if(wasAnswered&&wasSaved){const capsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};setStack(s=>[...s,entryWithGreen({...date,btns:finalBtns,overrideUsed:false,capsule,hasCredit:computeHasCredit(finalBtns)},useJulian)]);}
+          setForwardStack([]);setDate(genDate(minY,maxY));
+          setRevealed(false);setLocked(false);setCalcPenalty(false);
+          setCalcOpen(false);resetPB();
+          setOverrideUsedThisQ(false);setBackDepth(0);
+          if(countedWrong){setPendingWrongOverride({wrongTime:wrongTimeRef.current,snapshot:preCalcPenaltySnapshotRef.current});}
+          else{setPendingWrongOverride(null);}
+          setCountedWrong(false);
+          wrongTimeRef.current=null;
+          // Per-Q state must not leak past advance. The snapshot was already
+          // captured into the stack entry's capsule above (in the wasAnswered
+          // branch); the live refs and canOverrideCorrect must be reset so the
+          // next question doesn't see stale Override-eligible state. Without
+          // this, a Q1 wrong-then-right-then-Q2-Override sequence enters
+          // Override Block 1 ("undo a correct answer") using Q1's stale
+          // snapshot, rewriting Q2 stats based on Q1 — visible as "score stays
+          // 1/1 after next correct."
+          prevStatsSnapshotRef.current=null;
+          preCalcPenaltySnapshotRef.current=null;
+          setCanOverrideCorrect(false);
+          saveStatsThisQRef.current=null;
+          if(isTimer(mode)&&active)tStartRef.current=performance.now();else if(mode==="classic")tStartRef.current=performance.now();
+        }
+        if(mode==="deduction")runDeductionRound(btnsForStack);
+      }
+      const pushLookupHistory=entry=>setLookupHistory(prev=>[entry,...prev].slice(0,20));
+      const moveHistoryEntryToTop=id=>setLookupHistory(prev=>{const idx=prev.findIndex(e=>e.id===id);if(idx<=0)return prev;const entry=prev[idx];return[entry,...prev.slice(0,idx),...prev.slice(idx+1)];});
+      const clearLookupHistory=()=>setLookupHistory([]);
+      const doNew=(opts={})=>{const{skipInactiveMessage=false}=opts;if(isTimer(mode)&&!active){if(skipInactiveMessage)pushAndNext();return;}pushAndNext();};
+      function reveal(){
+        // Penalty-free reveal on unanswered back entries
+        if(locked&&!revealed&&backDepth>0){
+          if(mode==="deduction"&&ded){markCorrect(getDedCorrectIdx());}
+          else{markCorrect(correct);}
+          setRevealed(true);return;
+        }
+        if(locked)return;
+        if(mode==="deduction"){if(!ded)return;updateStats(c=>{c.played+=1;c.streak=0;});markCorrect(getDedCorrectIdx());setLocked(true);setRevealed(true);setCountedWrong(true);setCanOverrideCorrect(false);return;}
+        const roundOver=(mode==="blitz")&&!active;
+        if(!countedWrong){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current=null;}
+        if(!countedWrong&&!roundOver)updateStats(c=>{c.played+=1;c.streak=0;});
+        if(mode==="blitz"&&!countedWrong&&!roundOver)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));
+        setCountedWrong(true);setCanOverrideCorrect(false);
+        if(isTimer(mode)&&active){setActive(false);setShowTimerDate(true);if(mode==="blitz"&&!perQ){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setTimerDone(true);}if(mode==="blitz"&&perQ){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setTimerDone(true);}if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;}}
+        markCorrect(correct);setLocked(true);setRevealed(true);
+      }
+      function goBack(){
+        if(mode==="deduction"){
+          const curStack=dedStack[dedType]||[];
+          const prev=curStack[curStack.length-1];if(!prev)return;
+          if(calcOpen)setCalcOpen(false);
+          // Save current view to forward stack
+          const fwdCapsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+          const fwdHC=backDepth===0?computeHasCredit(persistBtns):browseHasCredit;
+          const fwdEntry=backDepth===0
+            ?{isLive:true,...(ded||{}),btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:fwdCapsule,liveState:{locked,revealed,countedWrong,canOverrideCorrect,calcPenaltyActive,saveStatsFrozen:saveStatsThisQRef.current},hasCredit:fwdHC}
+            :{...(ded||{}),btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:fwdCapsule,hasCredit:fwdHC};
+          setDedForwardStack(s=>({...s,[dedType]:[...(s[dedType]||[]),fwdEntry]}));
+          setDedStack(s=>({...s,[dedType]:(s[dedType]||[]).slice(0,-1)}));setDed(prev);
+          const wasAnswered=prev.btns&&Object.keys(prev.btns).length>0;
+          const wasRevealed=!!(prev.btns&&Object.values(prev.btns).includes('correct'));
+          setPersistBtns(wasAnswered?prev.btns:{});setLocked(true);setRevealed(wasRevealed);
+          setCountedWrong(false);setPendingWrongOverride(null);setCalcPenalty(false);
+          const cap=prev.capsule||{};
+          prevStatsSnapshotRef.current=cap.snapshot||null;wrongTimeRef.current=cap.wrongTime??null;
+          setCanOverrideCorrect(cap.snapshot!=null&&!(prev.overrideUsed||false));
+          setOverrideUsedThisQ(prev.overrideUsed||false);setBackDepth(d=>d+1);setBrowseHasCredit(prev.hasCredit??computeHasCredit(prev.btns));
+          // Entries in the stack were necessarily saved when pushed (frozen-OFF
+          // questions are never pushed), so back-browsed entries are always
+          // treated as saved. Pressing New from this state will re-push.
+          saveStatsThisQRef.current=true;return;
+        }
+        const prev=stack[stack.length-1];if(!prev)return;
+        if(calcOpen)setCalcOpen(false);
+        // Save current view to forward stack
+        const fwdCapsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+        const fwdHC=backDepth===0?computeHasCredit(persistBtns):browseHasCredit;
+        const fwdEntry=backDepth===0
+          ?{isLive:true,...date,btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:fwdCapsule,liveState:{locked,revealed,countedWrong,canOverrideCorrect,pendingWrongOverride,calcPenaltyActive,preCalcPenaltySnapshot:preCalcPenaltySnapshotRef.current?{...preCalcPenaltySnapshotRef.current}:null,saveStatsFrozen:saveStatsThisQRef.current},hasCredit:fwdHC}
+          :{...date,btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:fwdCapsule,hasCredit:fwdHC};
+        setForwardStack(s=>[...s,fwdEntry]);
+        setStack(s=>s.slice(0,-1));setDate(prev);
+        const wasAnswered=prev.btns&&Object.keys(prev.btns).length>0;
+        const wasRevealed=!!(prev.btns&&Object.values(prev.btns).includes('correct'));
+        setPersistBtns(wasAnswered?prev.btns:{});setLocked(true);setRevealed(wasRevealed);
+        setCountedWrong(false);setPendingWrongOverride(null);setCalcPenalty(false);
+        const cap=prev.capsule||{};
+        prevStatsSnapshotRef.current=cap.snapshot||null;wrongTimeRef.current=cap.wrongTime??null;preCalcPenaltySnapshotRef.current=null;
+        setCanOverrideCorrect(cap.snapshot!=null&&!(prev.overrideUsed||false));
+        setOverrideUsedThisQ(prev.overrideUsed||false);setBackDepth(d=>d+1);setBrowseHasCredit(prev.hasCredit??computeHasCredit(prev.btns));
+        saveStatsThisQRef.current=true;
+      }
+      function goForward(){
+        if(mode==="deduction"){
+          const curFwd=dedForwardStack[dedType]||[];
+          const fwd=curFwd[curFwd.length-1];if(!fwd)return;
+          if(calcOpen)setCalcOpen(false);
+          setDedForwardStack(s=>({...s,[dedType]:(s[dedType]||[]).slice(0,-1)}));
+          // Push current browsed entry back to dedStack
+          const capsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+          setDedStack(s=>({...s,[dedType]:[...(s[dedType]||[]),entryWithGreen({...(ded||{}),btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule,hasCredit:browseHasCredit},useJulian)]}));
+          if(fwd.isLive){
+            setDed(fwd);const ls=fwd.liveState||{};
+            setPersistBtns(fwd.btns||{});setLocked(!!ls.locked);setRevealed(!!ls.revealed);
+            setCountedWrong(!!ls.countedWrong);setCanOverrideCorrect(!!ls.canOverrideCorrect);
+            setCalcPenalty(!!ls.calcPenaltyActive);
+            setOverrideUsedThisQ(fwd.overrideUsed||false);
+            const fc=fwd.capsule||{};prevStatsSnapshotRef.current=fc.snapshot||null;wrongTimeRef.current=fc.wrongTime??null;
+            setBrowseHasCredit(fwd.hasCredit??false);
+            saveStatsThisQRef.current=ls.saveStatsFrozen===undefined?null:ls.saveStatsFrozen;
+          }else{
+            setDed(fwd);const fwdAnswered=fwd.btns&&Object.keys(fwd.btns).length>0;
+            const fwdRevealed=!!(fwd.btns&&Object.values(fwd.btns).includes('correct'));
+            setPersistBtns(fwdAnswered?fwd.btns:{});
+            setLocked(true);setRevealed(fwdRevealed);
+            setCountedWrong(false);setCalcPenalty(false);
+            const cap=fwd.capsule||{};prevStatsSnapshotRef.current=cap.snapshot||null;wrongTimeRef.current=cap.wrongTime??null;
+            setCanOverrideCorrect(cap.snapshot!=null&&!(fwd.overrideUsed||false));
+            setOverrideUsedThisQ(fwd.overrideUsed||false);
+            setBrowseHasCredit(fwd.hasCredit??computeHasCredit(fwd.btns));
+            saveStatsThisQRef.current=true;
+          }
+          setBackDepth(d=>Math.max(0,d-1));return;
+        }
+        const fwd=forwardStack[forwardStack.length-1];if(!fwd)return;
+        if(calcOpen)setCalcOpen(false);
+        setForwardStack(s=>s.slice(0,-1));
+        // Push current browsed entry back to stack
+        const capsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+        setStack(s=>[...s,entryWithGreen({...date,btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule,hasCredit:browseHasCredit},useJulian)]);
+        if(fwd.isLive){
+          setDate({y:fwd.y,m:fwd.m,d:fwd.d,_fmt:fwd._fmt,_jul:fwd._jul});const ls=fwd.liveState||{};
+          setPersistBtns(fwd.btns||{});setLocked(!!ls.locked);setRevealed(!!ls.revealed);
+          setCountedWrong(!!ls.countedWrong);setCanOverrideCorrect(!!ls.canOverrideCorrect);
+          
+          setPendingWrongOverride(ls.pendingWrongOverride||null);
+          setCalcPenalty(!!ls.calcPenaltyActive);preCalcPenaltySnapshotRef.current=ls.preCalcPenaltySnapshot||null;
+          setOverrideUsedThisQ(fwd.overrideUsed||false);
+          const fc=fwd.capsule||{};prevStatsSnapshotRef.current=fc.snapshot||null;wrongTimeRef.current=fc.wrongTime??null;
+          setBrowseHasCredit(fwd.hasCredit??false);
+          saveStatsThisQRef.current=ls.saveStatsFrozen===undefined?null:ls.saveStatsFrozen;
+        }else{
+          setDate({y:fwd.y,m:fwd.m,d:fwd.d,_fmt:fwd._fmt,_jul:fwd._jul});const fwdAnswered=fwd.btns&&Object.keys(fwd.btns).length>0;
+          const fwdRevealed=!!(fwd.btns&&Object.values(fwd.btns).includes('correct'));
+          setPersistBtns(fwdAnswered?fwd.btns:{});
+          setLocked(true);setRevealed(fwdRevealed);
+          setCountedWrong(false);setPendingWrongOverride(null);setCalcPenalty(false);preCalcPenaltySnapshotRef.current=null;
+          const cap=fwd.capsule||{};prevStatsSnapshotRef.current=cap.snapshot||null;wrongTimeRef.current=cap.wrongTime??null;
+          setCanOverrideCorrect(cap.snapshot!=null&&!(fwd.overrideUsed||false));
+          setOverrideUsedThisQ(fwd.overrideUsed||false);
+          setBrowseHasCredit(fwd.hasCredit??computeHasCredit(fwd.btns));
+          saveStatsThisQRef.current=true;
+        }
+        setBackDepth(d=>Math.max(0,d-1));
+      }
+      function recalcStreak(newCurHasCredit){
+        const mainStack=mode==="deduction"?(dedStack[dedType]||[]):stack;
+        const fwdStack=mode==="deduction"?(dedForwardStack[dedType]||[]):forwardStack;
+        const history=[
+          ...mainStack.map(e=>!!e.hasCredit),
+          newCurHasCredit,
+          ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
+        ];
+        let curStreak=0;
+        for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
+        let bestStreak=0,run=0;
+        for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+        updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
+        if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
+          if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
+            // Best Streak update at round end. Two cases:
+            //   - Ratchet up: recomputed bestStreak > saved → take the new value
+            //     (works regardless of which round originally set the saved best).
+            //   - Roll back down: only when the saved streakRoundId matches the
+            //     current round id — i.e., this round's streak is what set the
+            //     saved best, and we just lowered this round's recomputed streak
+            //     via retro-override. If streakRoundId belongs to an earlier
+            //     round, the saved best legitimately came from a different run
+            //     and must not be lowered.
+            // See currentBlitzRoundIdRef declaration for the full rationale.
+            setBlitzBest(prev=>{const cur=prev[bk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
+              if(bestStreak>cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak,streakRoundId:rid}};
+              if(cur.streakRoundId===rid&&bestStreak<cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak}};
+              return prev;
+            });}
+        }
+        return{curStreak,bestStreak};
+      }
+      // override() — the most complex function in the file. Handles 5 distinct paths:
+      //   1. BROWSING-BACK override (backDepth>0 + canOverrideCorrect): delta-based stat adjustment
+      //      using snapshot, then recalcStreak over full history
+      //   2. LIVE canOverrideCorrect (pure first-try correct, now reversing): undo credit, either
+      //      advance to new date (timing on) or stay + clear state (timing off)
+      //   3. countedWrong (wrong then override on same date): give retroactive credit, resume
+      //      timer if applicable (Flash drops to idle instead of restarting flash-show)
+      //   4. pendingWrongOverride (wrong on previous question, now correcting retroactively):
+      //      give retroactive credit for the previous date, update stack entry to green-only
+      //   5. retroOverrideEligible (live Q untouched + most recent stack entry not yet
+      //      overridden): retroactively flip that stack entry both directions —
+      //      wrong→right (give credit, mark green) or right→wrong (roll back credit, mark
+      //      with diagonal-split override-wrong visual). Live Q stays unanswered.
+      // Path-dispatch state table — which combination of state triggers which path:
+      //   ┌─────────────┬─────────────────────┬──────────────┬──────────────────────┬───────────────────────┬──────┐
+      //   │ backDepth   │ canOverrideCorrect  │ countedWrong │ pendingWrongOverride │ retroOverrideEligible │ Path │
+      //   ├─────────────┼─────────────────────┼──────────────┼──────────────────────┼───────────────────────┼──────┤
+      //   │   > 0       │      true           │      —       │          —           │          —            │  1   │
+      //   │   = 0       │      true           │      —       │          —           │          —            │  2   │
+      //   │   = 0       │      false          │     true     │          —           │          —            │  3   │
+      //   │   = 0       │      false          │     false    │       not null       │          —            │  4   │
+      //   │   = 0       │      false          │     false    │        null          │        true           │  5   │
+      //   └─────────────┴─────────────────────┴──────────────┴──────────────────────┴───────────────────────┴──────┘
+      // Streak restoration is uniform across all paths: full-history recalc (recalcStreak
+      // helper or its inline equivalent when stale-state concerns exist). Snapshot refs
+      // are still used to roll back played/good/times — only streak is now snapshot-free.
+      //
+      // Path precedence: paths are checked in order 1 → 2 → 3 → 4 → 5; the first matching
+      // path wins. When two paths' conditions could be simultaneously true, the higher
+      // path takes the action. Concrete consequence: if the user lands on a new Q with
+      // `pendingWrongOverride` set from a previous wrong-then-right (Path 4 ready), then
+      // burns the new Q via Show Codes or Reveal (setting `countedWrong=true`), Path 3
+      // wins on the next Override press — credit goes to the burned Q, and the Path 4
+      // pending state for the previous Q is dropped when the next Q advances. This is
+      // intentional: the user moved on to the new Q without resolving the previous one.
+      function override(){
+        // Save Stats off locks Override entirely — see overrideAvail formula below.
+        // This function is only reached when Override is enabled, which now requires
+        // saveStats=true. No save-stats-off branch is needed; the gating handles it.
+        setOverrideUsedThisQ(true);
+        // === BROWSING-BACK OVERRIDE: delta-based stat adjustment + streak recalc ===
+        if(backDepth>0&&canOverrideCorrect&&prevStatsSnapshotRef.current){
+          const u=prevStatsSnapshotRef.current;
+          const newHC=!!u.wasWrong;
+          setBrowseHasCredit(newHC);
+          if(u.wasWrong){
+            // Capture wrongTimeRef.current locally — the mutator below runs lazily during React's
+            // batched update phase, by which point wrongTimeRef.current=null below has already
+            // cleared the value, so reading it inside the closure would push nothing.
+            const wt=wrongTimeRef.current;
+            // Give credit for a previously wrong answer
+            updateStats(c=>{c.good+=1;if(wt!=null&&trackingOn())c.times=[...c.times,wt];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:p.good+1}));
+            if(mode==="deduction")setPersistBtns({[getDedCorrectIdx()]:'correct'});
+            else setPersistBtns({[correct]:'correct'});
+          }else{
+            // Undo credit for a previously correct answer
+            const tIdx=typeof u.timesLen==="number"?u.timesLen:null;
+            updateStats(c=>{c.good=Math.max(0,c.good-1);if(tIdx!=null&&tIdx<c.times.length)c.times=[...c.times.slice(0,tIdx),...c.times.slice(tIdx+1)];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:Math.max(0,p.good-1)}));
+            // Display the diagonal-split visual matching Path 5's right→wrong (green
+            // upper-left = originally correct, red lower-right = now counted wrong).
+            // Without this, the displayed btns kept the plain green from before the
+            // flip, even though the saved entry's hasCredit was now false. The HtP
+            // already promises this visual for "previously correct date that's been
+            // retroactively flipped to wrong" — Path 5 implemented it; Path 1 didn't.
+            // entryWithGreen treats override-wrong-only entries as already having a
+            // marked answer (no synthesized green), so the visual persists correctly
+            // when the user navigates away or reloads the entry via Forward.
+            if(mode==="deduction")setPersistBtns({[getDedCorrectIdx()]:'override-wrong'});
+            else setPersistBtns({[correct]:'override-wrong'});
+            if(timerDone){
+              // Best Score rollback (Per Round): only lower the saved best if its
+              // scoreRoundId matches the round whose history we're currently
+              // browsing. The current round's id is captured in
+              // currentBlitzRoundIdRef.current at round end. When this round didn't
+              // beat the prior best (Math.max kept the saved value), scoreRoundId
+              // still points to whichever earlier round originally set it — so the
+              // gate correctly skips rollback. New value `blitzRoundStats.good - 1`
+              // equals the recomputed round score after the override (the setBlitzRoundStats
+              // above subtracted 1 from blitzRoundStats.good in the closure-staged update).
+              if(mode==='blitz'&&!perQ){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;setBlitzBest(prev=>{const cur=prev[bk];if(!cur)return prev;if(cur.scoreRoundId!==rid)return prev;const ng=Math.max(0,blitzRoundStats.good-1);return{...prev,[bk]:{...cur,score:ng}};});}
+              // Best Score rollback (Per Question / Sudden): use suddenBestSnapRef
+              // (captured at this round's timerDone effect) as a floor. The new
+              // saved best is the higher of (this round's recomputed score) and
+              // (the previous saved best before this round). If snapshot is missing
+              // (path 3 already consumed it via override-after-wrong), fall back to
+              // Math.max(0, S.good - 1) as a defensive default.
+              if(mode==='blitz'&&perQ)setSuddenBest(prev=>{const cur=prev[getSuddenBk()];if(!cur)return prev;if(cur.score!==S.good)return prev;const snapPrev=(suddenBestSnapRef.current&&suddenBestSnapRef.current.key===getSuddenBk())?suddenBestSnapRef.current.prev.score:0;const ng=Math.max(snapPrev,S.good-1);return{...prev,[getSuddenBk()]:{score:ng}};});
+            }
+          }
+          recalcStreak(newHC);
+          prevStatsSnapshotRef.current=null;wrongTimeRef.current=null;setCanOverrideCorrect(false);
+          return;
+        }
+        // === LIVE QUESTION OVERRIDE PATHS ===
+        if(canOverrideCorrect&&prevStatsSnapshotRef.current){
+          const u=prevStatsSnapshotRef.current;
+          if(u.wasWrong){
+            // Capture wrongTimeRef.current locally — see Fix #1 comment above. Same lazy-mutator
+            // hazard: wrongTimeRef.current=null below would clear the value before the mutator runs.
+            const wt=wrongTimeRef.current;
+            updateStats(c=>{c.played=u.played+1;c.good=u.good+1;c.streak=u.streak+1;if(c.streak>c.best)c.best=c.streak;c.times=c.times.slice(0,u.timesLen);if(wt!=null&&trackingOn())c.times=[...c.times,wt];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,played:u.blitzPlayed+1,good:u.blitzGood+1}));
+          }else{
+            updateStats(c=>{c.played=u.played+1;c.good=u.good;c.streak=0;c.times=c.times.slice(0,u.timesLen);});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,played:u.blitzPlayed+1,good:u.blitzGood}));
+          }
+          prevStatsSnapshotRef.current=null;wrongTimeRef.current=null;setCanOverrideCorrect(false);setCountedWrong(true);
+          if(u.wasWrong){if(mode==="deduction"){setDedStack(s=>{const arr=s[dedType]||[];if(!arr.length)return s;const last=arr[arr.length-1];const ci=dedCorrectIdxFor(last);return{...s,[dedType]:[...arr.slice(0,-1),{...last,btns:{[ci]:'correct'},overrideUsed:true}]};});}else{setStack(s=>{if(!s.length)return s;const last=s[s.length-1];const wd=activeWday(last.y,last.m,last.d);return[...s.slice(0,-1),{...last,btns:{[wd]:'correct'},overrideUsed:true}];});}}
+          if(!timingOff){pushAndNext();if(mode==="deduction")setDedStack(s=>{const arr=s[dedType]||[];if(!arr.length)return s;return{...s,[dedType]:[...arr.slice(0,-1),{...arr[arr.length-1],overrideUsed:true}]};});else setStack(s=>{if(!s.length)return s;return[...s.slice(0,-1),{...s[s.length-1],overrideUsed:true}];});}
+          else{setLocked(false);setRevealed(false);setCalcPenalty(false);setCalcOpen(false);}
+          return;
+        }
+        if(countedWrong){
+          // Streak consolidation: all override paths now use recalcStreak() over the
+          // full history rather than snapshot arithmetic. This makes streak restoration
+          // consistent regardless of how the question reached its current state
+          // (Reveal/Show Codes used to null the snapshot, which silently degraded streak).
+          // Capture wrongTimeRef.current locally — the mutator runs lazily during React's
+          // batched update phase, by which point wrongTimeRef.current=null below would have
+          // cleared it. Without this capture, c.good += 1 still applies (direct) but the time
+          // never gets pushed into c.times — visible as: Score/Accuracy/Streak update on
+          // wrong→override, but Last/Average/Median don't, causing a count desync.
+          const wt=wrongTimeRef.current;
+          updateStats(c=>{c.good+=1;if(wt!=null&&trackingOn())c.times=[...c.times,wt];});
+          wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;
+          if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:p.good+1}));
+          setCountedWrong(false);setCanOverrideCorrect(false);setLocked(false);setRevealed(false);setCalcPenalty(false);setCalcOpen(false);
+          recalcStreak(true);
+          // Deduction renders flash from dedFlash (shape: {kind, index, ok}) — `flash`
+          // state is for Classic/Flash buttons only. Without this branch, override-after-wrong
+          // would set the wrong state variable in Deduction and no green would appear.
+          if(mode==="deduction"){
+            setDedFlashWithTimeout({kind:ded.type,index:getDedCorrectIdx(),ok:true});
+          }else{
+            setFlashWithTimeout({type:"good",idx:correct});
+          }
+          // Timer-mode resume after override-from-wrong:
+          //   Blitz Per Round: resume countdown where it left off.
+          //   Blitz Per Question: restart the per-Q timer, revert saved best if it was just written.
+          //   Flash: drop to idle (same as post-correct) — pushAndNext below will load the next date; user presses Begin to reveal it.
+          if(isTimer(mode)){
+            if(mode==="flash"){
+              setActive(false);setShowTimerDate(false);
+              clearTimeout(flashTimerRef.current);flashTimerRef.current=null;
+              setFlashPhase("dash");flashDeadlineRef.current=null;
+              setFlashRemainMs(flashMs);resetFlashBar();
+            }else{
+              setActive(true);setShowTimerDate(false);
+              if(mode==="blitz"&&!perQ){blitzStartRef.current=performance.now()-((blitzSec-blitzRemainRef.current)*1000);blitzPausedAccRef.current=0;setBlitzRunning(true);}
+              if(mode==="blitz"&&perQ){setTimerDone(false);const sk=getSuddenBk();if(suddenBestSnapRef.current&&suddenBestSnapRef.current.key===sk){const revertBest=suddenBestSnapRef.current.prev;setSuddenBest(prev=>({...prev,[sk]:revertBest}));setSuddenBestNew(p=>{const n={...p};delete n[sk];return n;});suddenBestSnapRef.current=null;}const now=performance.now();qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}
+            }
+          }
+          const overrideBtns=mode==="deduction"?{[getDedCorrectIdx()]:'correct'}:{[correct]:'correct'};pushAndNext(overrideBtns);if(mode==="deduction")setDedStack(s=>{const arr=s[dedType]||[];if(!arr.length)return s;return{...s,[dedType]:[...arr.slice(0,-1),{...arr[arr.length-1],overrideUsed:true}]};});else setStack(s=>{if(!s.length)return s;return[...s.slice(0,-1),{...s[s.length-1],overrideUsed:true}];});setPendingWrongOverride(null);return;
+        }
+        if(pendingWrongOverride!=null){
+          // Path 4 is unreachable in Per Question Blitz (Sudden) by mode design —
+          // wrong is terminal in that mode (locks the Q immediately on wrong, no
+          // try-again to produce a wrong-then-right sequence). Modes where it IS
+          // reachable: Classic, Flash, Deduction, Per Round Blitz (Allow Mistakes
+          // on), AoX (Allow Mistakes on, separate code path in AoxMode).
+          const {wrongTime,snapshot}=pendingWrongOverride;
+          // Streak consolidation: roll back played/good via snapshot when available
+          // (snapshot may be null if Reveal/Show Codes nulled it after the wrong was
+          // captured), but always recompute streak from the NEW stack value below.
+          if(snapshot){
+            updateStats(c=>{c.played=snapshot.played+1;c.good=snapshot.good+1;c.times=c.times.slice(0,snapshot.timesLen);if(wrongTime!=null&&trackingOn())c.times=[...c.times,wrongTime];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,played:snapshot.blitzPlayed+1,good:snapshot.blitzGood+1}));
+          }else{
+            updateStats(c=>{c.good+=1;if(wrongTime!=null&&trackingOn())c.times=[...c.times,wrongTime];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:p.good+1}));
+          }
+          // Build the new (post-override) stack value, used both for setStack and
+          // the inline streak recalc that follows.
+          const setTargetStack=mode==="deduction"?setDedStack:setStack;
+          const targetStack=mode==="deduction"?(dedStack[dedType]||[]):stack;
+          const fwdStack=mode==="deduction"?(dedForwardStack[dedType]||[]):forwardStack;
+          let newLastEntry;
+          if(mode==="deduction"){
+            const last=targetStack[targetStack.length-1];if(!last){setPendingWrongOverride(null);preCalcPenaltySnapshotRef.current=null;return;}
+            const ci=dedCorrectIdxFor(last);
+            newLastEntry={...last,btns:{[ci]:'correct'},overrideUsed:true,hasCredit:true};
+          }else{
+            const last=targetStack[targetStack.length-1];if(!last){setPendingWrongOverride(null);preCalcPenaltySnapshotRef.current=null;return;}
+            const wd=activeWday(last.y,last.m,last.d);
+            newLastEntry={...last,btns:{[wd]:'correct'},overrideUsed:true,hasCredit:true};
+          }
+          const newStack=[...targetStack.slice(0,-1),newLastEntry];
+          if(mode==="deduction")setDedStack(s=>({...s,[dedType]:newStack}));
+          else setStack(newStack);
+          // Inline streak recalc using the post-override stack. Live Q is unanswered
+          // (newCurHasCredit=false) so it doesn't contribute to the streak.
+          const history=[
+            ...newStack.map(e=>!!e.hasCredit),
+            ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
+          ];
+          let curStreak=0;
+          for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
+          let bestStreak=0,run=0;
+          for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+          updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
+          if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
+            if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
+              // Best Streak update at round end. Same round-id pattern as recalcStreak —
+              // see currentBlitzRoundIdRef declaration. Path 4 only adds credit, so
+              // bestStreak >= the round's prior best; the roll-down branch is
+              // unreachable in practice but kept for uniformity with Path 1 / Path 5.
+              setBlitzBest(prev=>{const cur=prev[bk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
+                if(bestStreak>cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak,streakRoundId:rid}};
+                if(cur.streakRoundId===rid&&bestStreak<cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak}};
+                return prev;
+              });}
+          }
+          setPendingWrongOverride(null);preCalcPenaltySnapshotRef.current=null;
+          if(!timingOff){pushAndNext();if(mode==="deduction")setDedStack(s=>{const arr=s[dedType]||[];if(!arr.length)return s;return{...s,[dedType]:[...arr.slice(0,-1),{...arr[arr.length-1],overrideUsed:true}]};});else setStack(s=>{if(!s.length)return s;return[...s.slice(0,-1),{...s[s.length-1],overrideUsed:true}];});}
+          else{
+            // Timing-hidden branch: Path 4 retroactively credited the PREVIOUS Q;
+            // the live Q is untouched. The `setOverrideUsedThisQ(true)` at the top
+            // of override() was set as a blanket double-fire guard, but since the
+            // live Q is unchanged, future state on this same live Q (e.g. the user
+            // submits a wrong answer) should re-arm Override via Path 3. Clear the
+            // flag so the live Q is eligible for its own override path. The
+            // timing-visible branch above doesn't need this — pushAndNext clears
+            // overrideUsedThisQ naturally on advance.
+            setOverrideUsedThisQ(false);
+          }
+          return;
+        }
+        // === PATH 5: RETROACTIVE OVERRIDE OF MOST RECENT STACK ENTRY ===
+        // Fires when the live Q is fully untouched and the user clicks Override to flip
+        // the most recent stack entry's right/wrong status. Both directions supported:
+        //   wrong → right: gives credit (mirrors path 1's u.wasWrong=true branch).
+        //   right → wrong: rolls back credit, removes time entry, updates Best Score
+        //                  if the entry's stat just set it (mirrors path 1's else branch).
+        // The live Q is NOT advanced — it stays as-is so the user can still answer it
+        // afterward. Stack entry's overrideUsed:true flag prevents re-override
+        // (back-browsing to it later sees the locked Override button via existing logic
+        // that propagates entry.overrideUsed → overrideUsedThisQ on goBack).
+        // Live state is not affected: prevStatsSnapshotRef remains null, canOverrideCorrect
+        // stays false, pendingWrongOverride stays null. Only stats and the stack entry change.
+        // Streak recalc is done inline (not via recalcStreak helper) because that helper
+        // reads the STALE mainStack from React state — by the time it runs, our setStack
+        // hasn't been applied yet. Inline version uses the just-updated stack value directly.
+        if(retroOverrideEligible){
+          const targetStack=mode==='deduction'?(dedStack[dedType]||[]):stack;
+          const fwdStack=mode==='deduction'?(dedForwardStack[dedType]||[]):forwardStack;
+          const targetEntry=targetStack[targetStack.length-1];
+          const u=targetEntry.capsule.snapshot;
+          const targetWrongTime=targetEntry.capsule.wrongTime;
+          const newEntryHasCredit=!!u.wasWrong; // post-override: true if was wrong (now correct), false if was correct (now wrong)
+          // Build the new stack value (used both for setTargetStack and the inline streak recalc).
+          let newLastEntry;
+          if(u.wasWrong){
+            // Wrong → right: give credit
+            updateStats(c=>{c.good+=1;if(targetWrongTime!=null&&trackingOn())c.times=[...c.times,targetWrongTime];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:p.good+1}));
+            // Stack entry: clear all wrong markings, mark only the correct button green
+            if(mode==="deduction"){
+              const ci=dedCorrectIdxFor(targetEntry);
+              newLastEntry={...targetEntry,btns:{[ci]:'correct'},overrideUsed:true,hasCredit:true};
+            }else{
+              const wd=activeWday(targetEntry.y,targetEntry.m,targetEntry.d);
+              newLastEntry={...targetEntry,btns:{[wd]:'correct'},overrideUsed:true,hasCredit:true};
+            }
+          }else{
+            // Right → wrong: roll back credit, remove time entry, update Best if this entry's good just set it
+            const tIdx=typeof u.timesLen==="number"?u.timesLen:null;
+            updateStats(c=>{c.good=Math.max(0,c.good-1);if(tIdx!=null&&tIdx<c.times.length)c.times=[...c.times.slice(0,tIdx),...c.times.slice(tIdx+1)];});
+            if(mode==="blitz")setBlitzRoundStats(p=>({...p,good:Math.max(0,p.good-1)}));
+            if(timerDone){
+              // Best Score rollback (Per Round): same round-id gate as Path 1.
+              // See currentBlitzRoundIdRef declaration for the full rationale.
+              if(mode==='blitz'&&!perQ){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;setBlitzBest(prev=>{const cur=prev[bk];if(!cur)return prev;if(cur.scoreRoundId!==rid)return prev;const ng=Math.max(0,blitzRoundStats.good-1);return{...prev,[bk]:{...cur,score:ng}};});}
+              // Best Score rollback (Per Question / Sudden): same snapshot floor as Path 1.
+              if(mode==='blitz'&&perQ)setSuddenBest(prev=>{const cur=prev[getSuddenBk()];if(!cur)return prev;if(cur.score!==S.good)return prev;const snapPrev=(suddenBestSnapRef.current&&suddenBestSnapRef.current.key===getSuddenBk())?suddenBestSnapRef.current.prev.score:0;const ng=Math.max(snapPrev,S.good-1);return{...prev,[getSuddenBk()]:{score:ng}};});
+            }
+            // Stack entry: change btns to override-wrong state on the correct-answer button
+            // (replaces the existing 'correct' marking). Override visual: green-upper-left/
+            // red-lower-right diagonal split tells the time-flow story (originally correct,
+            // now flipped).
+            if(mode==="deduction"){
+              const ci=dedCorrectIdxFor(targetEntry);
+              newLastEntry={...targetEntry,btns:{[ci]:'override-wrong'},overrideUsed:true,hasCredit:false};
+            }else{
+              const wd=activeWday(targetEntry.y,targetEntry.m,targetEntry.d);
+              newLastEntry={...targetEntry,btns:{[wd]:'override-wrong'},overrideUsed:true,hasCredit:false};
+            }
+          }
+          const newStack=[...targetStack.slice(0,-1),newLastEntry];
+          if(mode==='deduction')setDedStack(s=>({...s,[dedType]:newStack}));
+          else setStack(newStack);
+          // Inline streak recalc using the new stack value. The live Q is unanswered
+          // so it doesn't contribute to the streak history.
+          const history=[
+            ...newStack.map(e=>!!e.hasCredit),
+            ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
+          ];
+          let curStreak=0;
+          for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
+          let bestStreak=0,run=0;
+          for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+          updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
+          if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
+            if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
+              // Best Streak update at round end. Same round-id pattern as recalcStreak —
+              // see currentBlitzRoundIdRef declaration. Path 5 right→wrong can lower
+              // the round's recomputed best streak (took credit away), so the
+              // roll-down branch genuinely fires here when the saved best came from
+              // this round; an earlier round's saved best is correctly preserved.
+              setBlitzBest(prev=>{const cur=prev[bk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
+                if(bestStreak>cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak,streakRoundId:rid}};
+                if(cur.streakRoundId===rid&&bestStreak<cur.streak)return{...prev,[bk]:{...cur,streak:bestStreak}};
+                return prev;
+              });}
+          }
+          // Note: overrideUsedThisQ was set true at top of override(); it stays true
+          // until the live Q advances (next New/correct answer) to prevent double-fire.
+          // The stack entry's own overrideUsed:true flag handles back-navigation lockout.
+          return;
+        }
+      }
+      function submitDoW(idx){
+        if(isTimer(mode)&&!active)return;if(locked)return;
+        if(idx===correct){
+          setFlashWithTimeout({type:"good",idx});
+          if(!countedWrong){prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:false};setCanOverrideCorrect(true);setPendingWrongOverride(null);if(tStartRef.current&&trackingOn()){const dt=(performance.now()-tStartRef.current)/1000;updateStats(c=>{c.times=[...c.times,dt];});}}
+          // Wrong-then-right on the same live Q reaches override Path 4 (via
+          // pendingWrongOverride set in pushAndNext below), NOT Path 2 — pushAndNext
+          // clears canOverrideCorrect on advance, so any setCanOverrideCorrect(true)
+          // here would be immediately wiped before render. Path 2's u.wasWrong=true
+          // branch is only reachable when a wrong-then-right entry is reloaded via
+          // back-browse (where canOverrideCorrect is restored from the entry's capsule).
+          if(!countedWrong)updateStats(c=>{c.played+=1;c.good+=1;c.streak+=1;if(c.streak>c.best)c.best=c.streak;});
+          if(mode==="blitz"&&!countedWrong)setBlitzRoundStats(p=>({...p,played:p.played+1,good:p.good+1,streak:p.streak+1,best:Math.max(p.best,p.streak+1)}));
+          if(mode==="blitz"&&perQ){const now=performance.now();qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}
+          if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");setActive(false);flashDeadlineRef.current=null;setFlashRemainMs(flashMs);resetFlashBar();}
+          pushAndNext(countedWrong?mkBtnsWithCorrect(persistBtns,correct):{[correct]:'correct'});
+        }else{
+          if(!countedWrong){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:true};}setPendingWrongOverride(null);
+          markWrong(idx);
+          if(!countedWrong)updateStats(c=>{c.played+=1;c.streak=0;});
+          if(mode==="blitz"&&!countedWrong)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));
+          setCountedWrong(true);setCanOverrideCorrect(false);
+          if(mode==="blitz"&&perQ){markCorrect(correct);setActive(false);setShowTimerDate(true);setTimerDone(true);qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;}
+          else if(mode==="blitz"&&!perQ&&!allowMistakes){markCorrect(correct);setActive(false);setShowTimerDate(true);setTimerDone(true);setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;}
+          setFlashWithTimeout({type:"bad",idx});
+        }
+      }
+      function spawnDed(){spawnDedWithRange(minY,maxY);}
+      // Generates a fresh Deduction puzzle for the current dedType and year range.
+      //
+      // Cross-mode summary of Feb 29 handling (since the rules differ subtly per sub-mode):
+      //   Year: window must contain at least one leap year. yc is forced to one of those leap
+      //         years; non-leap years still display as options but are "dead" — they have no
+      //         Feb 29 so they trivially can't be the answer (they don't break weekday
+      //         distinctness either since validateDistinct skips them).
+      //   Day:  no special handling needed. dimFn returns 28 for non-leap years, so d=29 is
+      //         only ever picked when isLeapY is true.
+      //   Month: no special handling needed. isLeapY determines MONTH_BOXES_LEAP vs _COMMON;
+      //         d is picked within dimFn's range (which already accounts for leap year).
+      function spawnDedWithRange(lo,hi){
+        setCalcPenalty(false);tStartRef.current=performance.now();
+        const pc=hi>=1?hi-Math.max(1,lo)+1:0;
+        // Decide leap preference once per question (not per attempt) so probabilities don't skew.
+        const r=Math.random();
+        let wantLeap=null;
+        if(leapChance==='100')wantLeap=true;
+        else if(leapChance==='75')wantLeap=r<0.75;
+        else if(leapChance==='50')wantLeap=r<0.5;
+        // Roll a separate random for Jan/Feb biasing (Option A semantics — see randomDate).
+        // Decide once per question so the probability is exact across questions.
+        const rjf=Math.random();
+        let wantJanFeb=null;
+        if(janFebChance==='100')wantJanFeb=true;
+        else if(janFebChance==='75')wantJanFeb=rjf<0.75;
+        else if(janFebChance==='50')wantJanFeb=rjf<0.5;
+        else if(janFebChance==='25')wantJanFeb=rjf<0.25;
+        const isLeapForY=yc=>{const jul=useJulian&&isJulianDate(yc,1,1);return jul?isLeapJulian(yc):isLeap(yc);};
+        // pickMonth: on leap years, force toward (or away from) Jan/Feb based on the rolled bias.
+        // On non-leap years (or when no bias is active), uniform across all 12 months.
+        const pickMonth=isLeapY=>{
+          if(wantJanFeb===null||!isLeapY)return rint(1,12);
+          return wantJanFeb?rint(1,2):rint(3,12);
+        };
+        // attachFmt stamps cross-cutting "settings snapshot" fields onto a fresh ded object
+        // so each puzzle remembers the settings under which it was generated. These ride
+        // along through stack/forwardStack via spread (...ded) and survive Back/Forward
+        // navigation. Per-mode-toggle fields (_abx, _julx, _m1582) are added by the sub-mode
+        // branches themselves; attachFmt only handles the always-present pair (_fmt, _jul).
+        //   _fmt   — date format snapshot. Always stamped: random roll when randomFormat
+        //            is on, current dateFormat when off. Display layer always trusts _fmt.
+        //            On a Cat A unanswered untouched live puzzle, format setting
+        //            changes can regen the live date (see regenDecisionFor); wrong guesses
+        //            on the live puzzle defer any format regen until the next puzzle.
+        //   _jul   — useJulian snapshot at generation time (used by codes panel + history)
+        //   _abx   — abCrossOnly snapshot (Year sub-mode; informational, not used for replay)
+        //   _julx  — julCrossOnly snapshot (Year sub-mode; informational)
+        //   _m1582 — monthOnly1582 snapshot (Month sub-mode; informational)
+        const attachFmt=o=>{o._fmt=randomFormat?rollFormat():dateFormat;o._jul=useJulian;return o;};
+        if(dedType==="year"){
+          // ----------------------------------------------------------------------
+          // YEAR sub-mode (B/C/G implementation):
+          //
+          //   Window of N consecutive years where each option has a DISTINCT weekday
+          //   for the puzzle's (m, d). User picks yc (the year matching the displayed
+          //   weekday) by the elimination of the other (N-1) years.
+          //
+          //   N defaults to 5 (the universal max for distinct-codes; N=6+ can collide
+          //   in normal Gregorian/Julian windows). Drops to 2 when the window
+          //   straddles Oct 15, 1582 with useJulian on (the +5 calendar-jump shift
+          //   collapses any longer window to duplicates).
+          //
+          //   ab Cross toggle (mode-level): force window to straddle a year ending
+          //   in 00 (any 100-year boundary; both leap and non-leap centuries qualify).
+          //   N stays 5.
+          //
+          //   Jul Cross toggle (mode-level): force window to straddle Oct 15, 1582
+          //   (Julian only). N=2. Auto-disabled when useJulian is OFF or year range
+          //   excludes the boundary years.
+          //
+          //   Both toggles on: 50/50 random per puzzle which constraint applies.
+          //
+          //   Feb 29 (m=2, d=29): only allowed when the window contains at least
+          //   one leap year (Greg or Julian as appropriate). yc is forced to one
+          //   of the leap years in the window; non-leap years still display as
+          //   options (they're "dead" — the puzzle has no Feb 29 in those years
+          //   so they trivially can't be the answer, but they don't break
+          //   distinctness because Feb 29 simply doesn't exist there).
+          // ----------------------------------------------------------------------
+
+          // Helper: does window [a, b] cross Oct 15, 1582 (the Julian/Greg boundary)?
+          // Boundary location depends on (m, d):
+          //   (m, d) before Oct 15 (Jan-Sep + Oct 1-4): boundary is between 1582 and 1583
+          //   (m, d) on/after Oct 15 (Oct 15+ + Nov + Dec): boundary is between 1581 and 1582
+          //   Oct 5-14: gap days, don't exist
+          const windowCrossesJulianBoundary=(a,b,m,d)=>{
+            if(!useJulian)return false;
+            if(a>b)return false;
+            const aIsJul=isJulianDate(a,m,d),bIsJul=isJulianDate(b,m,d);
+            return aIsJul!==bIsJul;
+          };
+          // Helper: which two-year boundary pair straddles 1582 for (m, d)?
+          const julianBoundaryPair=(m,d)=>{
+            if(m===10&&d>=5&&d<=14)return null; // gap day
+            if(m<10||(m===10&&d<=4))return[1582,1583];
+            return[1581,1582];
+          };
+          // Helper: does window [a, b] contain a year ending in 00?
+          // True iff floor(a/100) != floor(b/100).
+          const windowCrossesAb=(a,b)=>Math.floor(a/100)!==Math.floor(b/100);
+          // Helper: validate weekday distinctness for an option list.
+          // For Feb 29: skip non-leap years (they don't have Feb 29; treat as "dead" options).
+          const validateDistinct=(years,m,d)=>{
+            const wdays=[];
+            for(const y of years){
+              if(m===2&&d===29&&!isLeapForY(y))continue; // dead option, skip
+              if(d>dimFn(y,m))return false;
+              if(isGapDate(y,m,d))return false;
+              wdays.push(activeWday(y,m,d));
+            }
+            return new Set(wdays).size===wdays.length;
+          };
+          // Range check: enforce yc != 0 and within [max(1, lo), hi].
+          const inRange=y=>y!==0&&y>=Math.max(1,lo)&&y<=hi;
+          // Decide which crossing to enforce this puzzle (based on toggles).
+          // Note: enforcement may fail if the toggle's prerequisites aren't met (e.g. Jul Cross
+          // with year range that doesn't include 1582). In that case the toggle silently no-ops.
+          // Jul Cross is possible when useJulian is on AND the year range contains 1582 plus at
+          // least one of its neighbors (1581 for Oct15+/Nov/Dec dates, 1583 for Jan-Sep/Oct1-4
+          // dates). When only one neighbor is available, trySpawn retries until it picks an (m,d)
+          // matching the available boundary pair.
+          const julCrossPossible=julCrossOnly&&useJulian&&inRange(1582)&&(inRange(1581)||inRange(1583));
+          // ab Cross possible: range must span at least one 100-year boundary
+          const abCrossPossible=abCrossOnly&&Math.floor(Math.max(1,lo)/100)!==Math.floor(hi/100);
+          // `enforce` is computed ONCE before trySpawn's loop (rather than inside each attempt)
+          // so the 50/50 random choice for "both toggles on" doesn't re-roll on each retry.
+          // Re-rolling per-attempt would skew probabilities away from 50/50 because failed
+          // attempts would re-randomize, causing constraints with lower success rate to be
+          // tried more often than 50% of the time.
+          let enforce=null;
+          if(abCrossPossible&&julCrossPossible)enforce=Math.random()<0.5?'ab':'jul';
+          else if(abCrossPossible)enforce='ab';
+          else if(julCrossPossible)enforce='jul';
+
+          const trySpawn=()=>{
+            for(let attempt=0;attempt<3000;attempt++){
+              // Pick yc, m, d (with leap preference)
+              let yc=rint(Math.max(1,lo),hi);
+              if(yc===0)continue;
+              const isLeapY=isLeapForY(yc);
+              if(wantLeap!==null&&wantLeap!==isLeapY)continue;
+              const m=pickMonth(isLeapY);
+              const D=dimFn(yc,m);
+              if(D<=0)continue;
+              let d=rint(1,D);
+              if(isGapDate(yc,m,d))continue;
+              // Determine target N and window based on enforcement + natural crossing.
+              let target,windowYears;
+              if(enforce==='jul'){
+                // Forced Julian crossing — N=2
+                const pair=julianBoundaryPair(m,d);
+                if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
+                // For Feb 29: pair must contain at least one leap year
+                if(m===2&&d===29){
+                  const leaps=pair.filter(y=>isLeapForY(y));
+                  if(leaps.length===0)continue;
+                  yc=leaps[rint(0,leaps.length-1)];
+                }else{
+                  if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
+                  yc=pair[rint(0,1)];
+                }
+                target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
+              }else if(enforce==='ab'){
+                // Forced ab crossing — N=5, window must contain a year ending in 00
+                const P=rint(0,YEAR_OPTION_DEFAULT-1);
+                const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
+                if(!inRange(start)||!inRange(end))continue;
+                // Skip windows containing year 0 (impossible since year 0 doesn't exist; check defensively)
+                if(start<=0&&end>=0)continue;
+                if(!windowCrossesAb(start,end))continue;
+                // ab Cross is N=5; can't also cross Julian boundary (would need N=2 instead)
+                if(windowCrossesJulianBoundary(start,end,m,d))continue;
+                windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
+                if(m===2&&d===29){
+                  const leaps=windowYears.filter(y=>isLeapForY(y));
+                  if(leaps.length===0)continue;
+                  yc=leaps[rint(0,leaps.length-1)];
+                }
+                target=YEAR_OPTION_DEFAULT;
+              }else{
+                // No enforcement — natural N=5; if window would cross Julian boundary, drop to N=2
+                const P=rint(0,YEAR_OPTION_DEFAULT-1);
+                const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
+                if(!inRange(start)||!inRange(end))continue;
+                if(start<=0&&end>=0)continue;
+                if(windowCrossesJulianBoundary(start,end,m,d)){
+                  // Natural Julian crossing — switch to N=2 boundary pair
+                  const pair=julianBoundaryPair(m,d);
+                  if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
+                  if(m===2&&d===29){
+                    const leaps=pair.filter(y=>isLeapForY(y));
+                    if(leaps.length===0)continue;
+                    yc=leaps[rint(0,leaps.length-1)];
+                  }else{
+                    if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
+                    yc=pair[rint(0,1)];
+                  }
+                  target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
+                }else{
+                  windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
+                  if(m===2&&d===29){
+                    const leaps=windowYears.filter(y=>isLeapForY(y));
+                    if(leaps.length===0)continue;
+                    yc=leaps[rint(0,leaps.length-1)];
+                  }
+                  target=YEAR_OPTION_DEFAULT;
+                }
+              }
+              // Validate distinctness
+              if(!validateDistinct(windowYears,m,d))continue;
+              const w=activeWday(yc,m,d);
+              setDed(attachFmt({type:"year",y:yc,m,d,w,options:windowYears,_abx:abCrossOnly,_julx:julCrossOnly}));
+              return true;
+            }
+            return false;
+          };
+          // No fallback needed: the Year sub-mode playability contract ensures spawnDed is
+          // never called for Year sub-mode when the range can't support a buildable puzzle
+          // (Year button auto-disables, and the popover effect auto-switches to Day if the
+          // user is mid-session in Year when range becomes too narrow). If trySpawn somehow
+          // fails despite that contract, ded retains
+          // its previous value rather than being replaced with a degenerate 1-button puzzle.
+          trySpawn();
+          return;
+        }
+        if(dedType==="month"){
+          // ----------------------------------------------------------------------
+          // MONTH sub-mode (D/G implementation):
+          //
+          //   Standard layout: 7 fixed boxes grouped by shared month code.
+          //   Years ≠ 1582 (or with useJulian off): use MONTH_BOXES_COMMON / _LEAP
+          //   normally — every month in the year shares the same year code, so
+          //   the boxes work regardless of which year is picked.
+          //
+          //   Year = 1582 with useJulian on: special layout because the Julian/
+          //   Gregorian transition splits the year. Jan-Sep + Oct 1-4 use Julian
+          //   (year code +1); Oct 15+ + Nov + Dec use Gregorian (year code -2).
+          //   Box layout depends on which day range applies:
+          //     Days 1-4:  Oct groups with Jan, Nov in {Jan, Oct, Nov}
+          //     Days 5-14: Oct excluded entirely (gap days don't exist)
+          //     Days 15-31: Oct groups with Jun in {Jun, Oct}
+          //
+          //   1582 Only toggle (mode-level): force yc=1582. Auto-disabled when
+          //   useJulian is OFF or year range excludes 1582.
+          //
+          //   1582 included in normal Month play (no exclusion). When randomly
+          //   selected, the 1582-aware layout activates automatically.
+          // ----------------------------------------------------------------------
+
+          // Decide if we're forcing 1582
+          const force1582=monthOnly1582&&useJulian&&1582>=lo&&1582<=hi;
+          let yc=null;
+          if(force1582){
+            yc=1582;
+            // 1582 is not a leap year in either calendar; leap preference is silently ignored
+            // when forcing. (Falls through to non-leap treatment naturally.)
+          }else{
+            // Pick year respecting leap preference
+            for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
+            if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
+          }
+          const isLeapY=isLeapForY(yc);
+          const is1582Special=yc===1582&&useJulian;
+          // For 1582 special: pick d first (excluding gap days), then determine box layout from d.
+          // Otherwise: pick box, pick m, pick d within m's days.
+          if(is1582Special){
+            // 1582 with Julian on: the year splits into Julian (Jan-Sep + Oct1-4) and Gregorian
+            // (Oct15+ + Nov + Dec) halves with different year codes. Box layout depends on which
+            // day-range the puzzle's d falls into:
+            //   dCat='pre'  → days 1-4   → MONTH_BOXES_1582_PRE  (Oct in {Jan,Oct,Nov} sum-0 box)
+            //   dCat='gap'  → days 5-14  → MONTH_BOXES_1582_GAP  (October excluded — gap days don't exist)
+            //   dCat='post' → days 15-31 → MONTH_BOXES_1582_POST (Oct moves to {Jun,Oct} sum-4 box)
+            //
+            // dCat is picked first, weighted by approximate day count per category (4/31, 10/31, 17/31).
+            // Then box + m + d follow the standard pick-box → pick-m → pick-d pattern. October is
+            // automatically excluded from dCat='gap' because MONTH_BOXES_1582_GAP omits it.
+            const dCat=(()=>{const r=Math.random();
+              if(r<4/31)return'pre';      // ~13% → days 1-4
+              if(r<14/31)return'gap';     // ~32% → days 5-14 (October excluded from box layout)
+              return'post';               // ~55% → days 15-31
+            })();
+            const boxes=dCat==='pre'?MONTH_BOXES_1582_PRE:dCat==='gap'?MONTH_BOXES_1582_GAP:MONTH_BOXES_1582_POST;
+            let pickFromBoxes=boxes;
+            // janFebChance is irrelevant for 1582 (not a leap year), but defensively respect it.
+            // Uses the per-question wantJanFeb roll from spawnDedWithRange — true means force
+            // Jan/Feb side, false means force away from Jan/Feb, null means no bias.
+            if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+            else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+            const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
+            let m;
+            if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+            else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+            else m=box.months[rint(0,box.months.length-1)];
+            // Pick d in m's valid range, restricted by category. For October days 5-14 don't exist,
+            // but we never reach m=10 with dCat='gap' since MONTH_BOXES_1582_GAP excludes October.
+            let d;
+            if(m===10){
+              if(dCat==='pre')d=rint(1,4);
+              else d=rint(15,31); // dCat='post' (gap is impossible here per box layout)
+            }else{
+              const D=dimFn(yc,m);
+              if(dCat==='pre')d=rint(1,Math.min(4,D));
+              else if(dCat==='gap')d=rint(5,Math.min(14,D));
+              else d=rint(15,D);
+            }
+            const w=activeWday(yc,m,d);
+            setDed(attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582}));
+            return;
+          }
+          // Standard (non-1582) path
+          const boxes=isLeapY?MONTH_BOXES_LEAP:MONTH_BOXES_COMMON;
+          let pickFromBoxes=boxes;
+          if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+          else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+          const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
+          let m;
+          if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+          else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+          else m=box.months[rint(0,box.months.length-1)];
+          const D=dimFn(yc,m),d=rint(1,D),w=activeWday(yc,m,d);
+          setDed(attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582}));
+          return;
+        }
+        if(dedType==="day"){
+          // ----------------------------------------------------------------------
+          // DAY sub-mode (E implementation):
+          //
+          //   N=7 consecutive days as default. Each day code is unique within
+          //   the window (codes cycle 0-6 every 7 days, so any 7 consecutive
+          //   real days have distinct codes).
+          //
+          //   Special case: October 1582 with useJulian on. Days 5-14 don't exist
+          //   (the Gregorian transition skipped them). Valid days are
+          //   {1, 2, 3, 4, 15, 16, ..., 31}. When the window straddles the gap
+          //   (mixes days from the {1-4} side and the {15-31} side), code
+          //   distinctness caps N at 4 (codes for 1,2,3,4 repeat as 1,2,3,4 at
+          //   15,16,17,18 — every 5-window crossing the gap has a duplicate).
+          //
+          //   Window layout in Oct 1582:
+          //     Correct day in {1-4}: window = {1,2,3,4} (only 4 valid days here).
+          //     Correct day in {15-31}: try N=7 within {15-31}; if d is too close
+          //       to the gap edge for a 7-window to fit on the right side, use N=4.
+          //   useJulian off: full 1-31, no gap, normal N=7.
+          // ----------------------------------------------------------------------
+          let yc=null;
+          for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
+          if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
+          const isLeapY=isLeapForY(yc);
+          const m=pickMonth(isLeapY),D=dimFn(yc,m);
+          // Special-case Oct 1582 with useJulian on
+          const isOct1582Special=yc===1582&&m===10&&useJulian;
+          if(isOct1582Special){
+            // Two sides: left {1-4} and right {15-31}.
+            // Weight by # valid days: 4 left vs 17 right (total 21).
+            // Within each side, mirror existing day-mode semantics: position uniform, d
+            // distributed by # of valid windows containing d.
+            const useLeft=Math.random()<4/21;
+            if(useLeft){
+              // Left side: window is fixed at {1,2,3,4}, N=4. d uniform → position uniform.
+              const d=rint(1,4);
+              const w=activeWday(yc,m,d);
+              setDed(attachFmt({type:"day",y:yc,m,w,d,options:[1,2,3,4]}));
+            }else{
+              // Right side: N=7 in {15..31}. Position P uniform [0..6], d uniform in [15+P, 25+P].
+              const span=DAY_OPTION_COUNT;
+              const P=rint(0,span-1);
+              const dLo=15+P,dHi=25+P;
+              const d=rint(dLo,dHi);
+              const start=d-P;
+              const w=activeWday(yc,m,d);
+              const opts=[];for(let v=start;v<start+span;v++)opts.push(v);
+              setDed(attachFmt({type:"day",y:yc,m,w,d,options:opts}));
+            }
+            return;
+          }
+          // Standard path (no gap-day awareness needed)
+          const span=Math.min(DAY_OPTION_COUNT,D);
+          const P=rint(0,span-1);
+          const dLo=P+1,dHi=D-(span-1)+P;
+          const d=rint(dLo,dHi),w=activeWday(yc,m,d);
+          const start=d-P,end=start+span-1;
+          const opts=[];for(let v=start;v<=end;v++)opts.push(v);
+          setDed(attachFmt({type:"day",y:yc,m,w,d,options:opts}));
+          return;
+        }
+      }
+      const captureDedSnap=()=>ded?({ded,countedWrong,locked,revealed,calcPenaltyActive}):null;
+      function changeDedType(next){if(next===dedType)return;resetPB();const cs=captureDedSnap();const ns=savedDedByType[next]||null;
+        // Tag the pending payload with the target type so the consuming effect can ignore stale
+        // entries from a prior changeDedType call that didn't get drained before this one fired.
+        // Without the tag, two rapid switches A→B→C would let B's payload be consumed by the C
+        // effect — incorrect. With the tag, B's stale payload is dropped and the consumer falls
+        // back to savedDedByType[C], which holds C's persistent state correctly.
+        pendingDedSwitchRef.current={type:next,snap:ns};setSavedDedByType(prev=>({...prev,[dedType]:cs}));setDedType(next);}
+      function flashDed(kind,index,ok){setDedFlashWithTimeout({kind,index,ok});}
+      function submitDedAnswer(val,index){
+        if(!ded||locked)return;
+        // sctn auto-advances after a correct Deduction answer. setCalcOpen(false) is in the
+        // batch so the ded change (via spawnDed) lands with the panel close — freeze contract.
+        const sctn=()=>{const ci=getDedCorrectIdx();const dedBtns=mkBtnsWithCorrect(persistBtns,ci);const capsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};setDedStack(s=>ded?({...s,[dedType]:[...(s[dedType]||[]),{...ded,btns:dedBtns,overrideUsed:false,capsule,hasCredit:computeHasCredit(dedBtns)}]}):s);setDedForwardStack(s=>({...s,[dedType]:[]}));spawnDed();setCountedWrong(false);setCanOverrideCorrect(false);setLocked(false);setRevealed(false);setOverrideUsedThisQ(false);setBackDepth(0);setCalcOpen(false);wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;resetPB();};
+        const sw=(label,idx)=>{if(!countedWrong){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:true};}markWrong(idx);setCountedWrong(true);setCanOverrideCorrect(false);};
+        if(ded.type==="year"){const ok=(+val)===ded.y;flashDed("year",index,ok);if(ok){if(!countedWrong){prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:false};setCanOverrideCorrect(true);if(tStartRef.current&&trackingOn()){const dt=(performance.now()-tStartRef.current)/1000;updateStats(c=>{c.times=[...c.times,dt];});}}if(!countedWrong)updateStats(c=>{c.played+=1;c.good+=1;c.streak+=1;if(c.streak>c.best)c.best=c.streak;});sctn();}else{if(!countedWrong)updateStats(c=>{c.played+=1;c.streak=0;});sw(fmtYear(+val),index);}}
+        if(ded.type==="month"){const ok=ded.boxes?ded.boxes[index]?.months.includes(ded.m):((+val)===ded.m);flashDed("month",index,ok);if(ok){if(!countedWrong){prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:false};setCanOverrideCorrect(true);if(tStartRef.current&&trackingOn()){const dt=(performance.now()-tStartRef.current)/1000;updateStats(c=>{c.times=[...c.times,dt];});}}if(!countedWrong)updateStats(c=>{c.played+=1;c.good+=1;c.streak+=1;if(c.streak>c.best)c.best=c.streak;});sctn();}else{if(!countedWrong)updateStats(c=>{c.played+=1;c.streak=0;});sw(String(val),index);}}
+        if(ded.type==="day"){const ok=(+val)===ded.d;flashDed("day",index,ok);if(ok){if(!countedWrong){prevStatsSnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good,wasWrong:false};setCanOverrideCorrect(true);if(tStartRef.current&&trackingOn()){const dt=(performance.now()-tStartRef.current)/1000;updateStats(c=>{c.times=[...c.times,dt];});}}if(!countedWrong)updateStats(c=>{c.played+=1;c.good+=1;c.streak+=1;if(c.streak>c.best)c.best=c.streak;});sctn();}else{if(!countedWrong)updateStats(c=>{c.played+=1;c.streak=0;});sw(String(+val),index);}}
+      }
+      // Mode-switch state preservation — fires synchronously when `mode` changes.
+      //   LEAVING: save stacks/timerDone snap/preservedQ based on what prevMode was doing.
+      //     Blitz mid-round: reset (nothing to preserve). Blitz timerDone: full snap captured.
+      //     Classic/Flash/Deduction with timing off: preservedQ captures question state for exact restore.
+      //   ARRIVING: restoringTimerDone uses the snap for slim reset + full restore.
+      //     Otherwise arm() resets, then preservedQ (if any) restores exact question state.
+      //   Key nuance: `date` in LEAVING must be dateByMode[prevMode], not the current mode's date.
+      useLayoutEffect(()=>{
+        const prevMode=prevModeForSwitchRef.current;prevModeForSwitchRef.current=mode;
+        const prevCalcOpen=calcOpenByMode[prevMode]??false;
+        // === LEAVING prevMode ===
+        // Blitz: mid-round (active) resets on return; timerDone preserves on return
+        const blitzLeavingMidRound=(prevMode==="blitz")&&active;
+        const blitzLeavingDone=(prevMode==="blitz")&&!active&&timerDone;
+        if(!blitzLeavingMidRound){stacksByModeRef.current[prevMode]={stack:[...stack],forwardStack:[...forwardStack],dedStack:{...dedStack},dedForwardStack:{...dedForwardStack},backDepth};}
+        else{delete stacksByModeRef.current[prevMode];}
+        // Blitz: save full snap when leaving in timerDone state; null it when leaving mid-round
+        if(prevMode==="blitz"){
+          if(blitzLeavingDone){
+            timerDoneSnapRef.current={
+              mode:prevMode,
+              S:{...S},
+              blitzRoundStats:{...blitzRoundStats},
+              persistBtns:{...persistBtns},
+              date:{...date},
+              calcOpen:prevCalcOpen,
+              canOverrideCorrect,
+              pendingWrongOverride,
+              overrideUsedThisQ,
+              browseHasCredit,
+
+              locked,
+              revealed,
+              countedWrong,
+              showTimerDate,
+              prevStatsSnapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,
+              preCalcPenaltySnapshot:preCalcPenaltySnapshotRef.current?{...preCalcPenaltySnapshotRef.current}:null,
+              wrongTime:wrongTimeRef.current,
+              blitzDisplay:{...blitzDisplayRef.current},
+              suddenDisplay:{...suddenDisplayRef.current},
+            };
+          }else{
+            timerDoneSnapRef.current=null;
+          }
+        }
+        // Preserve question state whenever leaving a timing-off mode (no interaction gate)
+        const leavingTimingOff=["classic","deduction","flash"].includes(prevMode)&&(timingOffByMode[prevMode]??false);
+        if(leavingTimingOff){
+          preservedByModeRef.current[prevMode]={persistBtns:{...persistBtns},locked,revealed,countedWrong,date:{...(dateByMode[prevMode]??dateByMode.classic)},calcOpen:prevCalcOpen};
+          if(prevMode==="deduction"&&ded)setSavedDedByType(prev=>({...prev,[dedType]:captureDedSnap()}));
+        } else if(["classic","deduction","flash"].includes(prevMode)){
+          delete preservedByModeRef.current[prevMode];
+        }
+        // === RESET & RESTORE ===
+        const snap=timerDoneSnapRef.current;
+        const restoringTimerDone=(mode==="blitz")&&snap?.mode===mode;
+        const arrivedTimingOff=["classic","flash","deduction"].includes(mode)&&(timingOffByMode[mode]??false);
+        const preservedQ=arrivedTimingOff?preservedByModeRef.current[mode]:null;
+        const arrivedDedPreserve=mode==="deduction"&&(timingOffByMode["deduction"]??false)&&!!preservedByModeRef.current["deduction"];
+        const savedStacks=stacksByModeRef.current[mode];
+        if(restoringTimerDone){
+          // Slim reset (no stat wipe), then restore full done state including override, browse, and codes state
+          setActive(false);setFlash(null);
+          setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;
+          qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;
+          clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");
+          flashDeadlineRef.current=null;setFlashRemainMs(flashMs);resetFlashBar();
+          tStartRef.current=null;
+          // Restore stacks
+          if(savedStacks){setStack(savedStacks.stack);setForwardStack(savedStacks.forwardStack);setDedStack(savedStacks.dedStack);setDedForwardStack(savedStacks.dedForwardStack);setBackDepth(savedStacks.backDepth);}
+          else{setStack([]);setDedStack(blankDedStacks());setForwardStack([]);setDedForwardStack(blankDedStacks());setBackDepth(0);}
+          // Restore full done-state snapshot
+          setTimerDone(true);
+          setBlitzRoundStats({...snap.blitzRoundStats});
+          setStatsByMode(prev=>({...prev,[mode]:{...snap.S}}));
+          setPersistBtns({...snap.persistBtns});
+          setDate({...snap.date});
+          
+          setLocked(snap.locked);setRevealed(snap.revealed);setCountedWrong(snap.countedWrong);
+          setCanOverrideCorrect(snap.canOverrideCorrect);
+          setPendingWrongOverride(snap.pendingWrongOverride);
+          setOverrideUsedThisQ(snap.overrideUsedThisQ);
+          setBrowseHasCredit(snap.browseHasCredit);
+          setShowTimerDate(snap.showTimerDate);
+          prevStatsSnapshotRef.current=snap.prevStatsSnapshot;
+          preCalcPenaltySnapshotRef.current=snap.preCalcPenaltySnapshot;
+          wrongTimeRef.current=snap.wrongTime;
+          setCalcOpen(!!snap.calcOpen);
+          // Restore timer bar widths / time text to last-seen values (DOM refs are attached during commit)
+          requestAnimationFrame(()=>{
+            if(snap.blitzDisplay){
+              if(blitzBarRef.current)blitzBarRef.current.style.width=snap.blitzDisplay.width;
+              if(blitzTimeRef.current&&snap.blitzDisplay.text)blitzTimeRef.current.textContent=snap.blitzDisplay.text;
+            }
+            if(snap.suddenDisplay){
+              if(suddenBarRef.current)suddenBarRef.current.style.width=snap.suddenDisplay.width;
+              if(suddenTimeRef.current&&snap.suddenDisplay.text)suddenTimeRef.current.textContent=snap.suddenDisplay.text;
+            }
+          });
+        } else {
+          arm();
+          // Restore stacks from saved, or clear
+          if(savedStacks){setStack(savedStacks.stack);setForwardStack(savedStacks.forwardStack);setDedStack(savedStacks.dedStack);setDedForwardStack(savedStacks.dedForwardStack);setBackDepth(savedStacks.backDepth);}
+          else{setStack([]);setForwardStack([]);setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());}
+          
+          setLocked(false);setRevealed(false);setCanOverrideCorrect(false);
+          wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;
+          if(mode==="deduction"){
+            setFlashPhase("dash");pendingDedSwitchRef.current=null;
+            if(!arrivedDedPreserve){setSavedDedByType(blankDedTypeStore());setDed(null);}
+          }
+          if(preservedQ){
+            setPersistBtns({...preservedQ.persistBtns});
+            setLocked(preservedQ.locked);setRevealed(preservedQ.revealed);
+            setCountedWrong(preservedQ.countedWrong);
+            if(preservedQ.countedWrong)setOverrideUsedThisQ(true);
+            
+            if(preservedQ.date)setDate({...preservedQ.date});
+            if(preservedQ.calcOpen)setCalcOpen(true);
+          } else if(["classic","flash","deduction"].includes(mode)){
+            // No preservation (timing on, or interacted): generate a fresh date/ded.
+            // Deduction handles its own spawn via the setDed(null) + savedDedByType clear above.
+            if(["classic","flash"].includes(mode)){
+              setDate(genDate(minY,maxY));
+              tStartRef.current=performance.now();
+            }
+            // If codes were showing, close with animation. MethodBreakdownSection's freeze contract keeps old codes visible during the 310ms close.
+            if(calcOpen)setCalcOpen(false);
+          }
+        }
+      },[mode]);
+      // setCalcOpen(false) is added to BOTH branches (snapshot-restore and spawn-fresh) so the
+      // ded change lands with the panel close — freeze contract in MethodBreakdownSection.
+      useEffect(()=>{
+        if(mode!=="deduction")return;setDedFlash(null);
+        const pending=pendingDedSwitchRef.current;pendingDedSwitchRef.current=null;
+        // Only consume the pending payload if its target type matches the current dedType.
+        // Stale entries (from a changeDedType call superseded before drain) are dropped here.
+        const validPending=pending&&pending.type===dedType?pending:null;
+        const snap=validPending?.snap||savedDedByType[dedType]||null;
+        if(snap&&snap.ded){setDed(snap.ded);setCountedWrong(!!snap.countedWrong);setLocked(!!snap.locked);setRevealed(!!snap.revealed);setCalcPenalty(!!snap.calcPenaltyActive);setCalcOpen(false);return;}
+        setLocked(false);setRevealed(false);setCountedWrong(false);setCalcOpen(false);spawnDed();
+      },[dedType,mode,savedDedByType]);
+      // Tailwind's `transition` utility intentionally omitted — it would re-introduce
+      // a 150ms multi-property fade on persist (red on wrong) and on flash border-color.
+      // Hover fades are handled by surface-button's own targeted 200ms bg-only
+      // transition (see <style> block at top of file).
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-sm select-none";
+      const idleBtn="surface-button";
+      const optionsDisabled=(isTimer(mode)&&!active)||locked||calcOpen||calcPenaltyActive;
+      // Layout helper for option grids in 3-col mode. Used by Day sub-mode (N=7 → last button
+      // alone gets col-span-3 → full row; N=4 → same handling). Year sub-mode does NOT use this
+      // helper anymore — it has its own grid-cols-6 layout for N=5 and grid-cols-2
+      // for N=2 Jul Cross.
+      const centerLastOpt=(index,total)=>{if(total<=0)return"";if(index===total-1&&total%3===1)return"col-span-3";return"";};
+      const timerSettingControl=(()=>{
+        if(mode==="blitz"&&!perQ)return(<div className="flex items-center gap-2"><input type="range" min="10" max="180" step="5" value={blitzSec} onChange={e=>{const v=+e.target.value;setBlitzSec(v);if(!active){setBlitzRemain(v);blitzRemainRef.current=v;if(blitzTimeRef.current)blitzTimeRef.current.textContent=fmtBlitzT(v);if(blitzBarRef.current)blitzBarRef.current.style.width="100%";}}} disabled={active||timerDone} style={{"--rng-fill":Math.round((blitzSec-10)/170*100)+"%"}} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-14 shrink-0 text-right">{fmtBlitzT(blitzSec)}</span></div>);
+        if(mode==="blitz"&&perQ)return(<div className="flex items-center gap-2"><input type="range" min="1" max="20" step="1" value={qSec} onChange={e=>{const v=+e.target.value;setQSec(v);if(!active){setQRemain(v);if(suddenTimeRef.current)suddenTimeRef.current.textContent=v+"s";if(suddenBarRef.current)suddenBarRef.current.style.width="100%";}}} disabled={active||timerDone} style={{"--rng-fill":Math.round((qSec-1)/19*100)+"%"}} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-8 shrink-0 text-right">{qSec}s</span></div>);
+        if(mode==="flash")return(<div className="flex items-center gap-2"><input type="range" min="100" max="3000" step="100" value={flashMs} onChange={e=>{const v=+e.target.value;setFlashMs(v);if(!active){setFlashRemainMs(v);resetFlashBar();}}} disabled={active} style={{"--rng-fill":Math.round((flashMs-100)/2900*100)+"%"}} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-10 shrink-0 text-right">{fmtFlashT(flashMs)}</span></div>);
+        return null;
+      })();
+
+      const shouldShowTimerDate=(!isTimer(mode))||active||showTimerDate;
+      const flashHiding=mode==="flash"&&active&&flashPhase==="hide";
+      // Flash blocks reveal while the date is hidden, except during the final hide phase (answer now expected).
+      // Blitz blocks reveal whenever the date isn't currently shown.
+      const timerBlocksReveal=isTimer(mode)&&(mode==="flash"?(!showTimerDate&&!flashHiding):!shouldShowTimerDate);
+      const revealDisabled=(locked&&revealed)||calcOpen||calcPenaltyActive||timerBlocksReveal||timerDone;
+      const timerBusy=isTimer(mode)&&active;
+      // Identifying when the new "retroactive override of most recent stack entry"
+      // path is available. Conditions: live Q is fully untouched (no buttons clicked,
+      // not locked, not revealed), no other override path is already armed, stack is
+      // nonempty, and the most recent stack entry hasn't already been overridden.
+      // The "stack entry's capsule.snapshot non-null" check ensures we have stat data
+      // to roll back/forward from — Save Stats OFF stack entries don't have snapshots
+      // and shouldn't be retroactively overridable (no stats to adjust).
+      const retroOverrideStack=mode==='deduction'?(dedStack[dedType]||[]):stack;
+      const retroOverrideEligible=(
+        !locked && !revealed && !countedWrong && !canOverrideCorrect &&
+        pendingWrongOverride==null &&
+        retroOverrideStack.length>0 &&
+        !retroOverrideStack[retroOverrideStack.length-1].overrideUsed &&
+        retroOverrideStack[retroOverrideStack.length-1].capsule?.snapshot!=null
+      );
+      // Override is universally locked when Save Stats is off — there are no stats
+      // to adjust anywhere (live Q, back-browsed entries, or AoX runs). Gates on the
+      // live `saveStats` global, not `effectiveSaveStats()`, so the lock is consistent
+      // across the whole UI including back-browse on entries that were saved earlier.
+      const overrideAvail=saveStats&&(countedWrong||canOverrideCorrect||pendingWrongOverride!=null||retroOverrideEligible)&&!overrideUsedThisQ;
+      const calcTarget=useMemo(()=>{if(mode==="lookup"||mode==="guide"||mode==="aox")return null;if(isTimer(mode)&&!shouldShowTimerDate)return null;if(mode==="deduction")return ded?{y:ded.y,m:ded.m,d:ded.d,_jul:ded._jul}:null;return date;},[mode,shouldShowTimerDate,date?.y,date?.m,date?.d,date?._jul,date?._fmt,ded?.y,ded?.m,ded?.d,ded?._jul,ded?._fmt]);
+      const calcTargetKey=calcTarget?`${calcTarget.y}-${calcTarget.m}-${calcTarget.d}`:"none";
+      const lookupCalcTargetKey=lookupCalcDate?`${lookupCalcDate.y}-${lookupCalcDate.m}-${lookupCalcDate.d}`:"none";
+      useEffect(()=>{const pm=prevModeRef.current;if(pm!==mode){prevModeRef.current=mode;return;}setCalcOpen(false);prevModeRef.current=mode;},[calcTargetKey,mode]);
+      const handleResetStats=()=>{resetStatsCurrent();if(mode==='blitz'){setBlitzBest({});setSuddenBest({});setBlitzBestNew({});setSuddenBestNew({});}setStack([]);setForwardStack([]);if(mode==='deduction'){setDedStack(s=>({...s,[dedType]:[]}));setDedForwardStack(s=>({...s,[dedType]:[]}));}else{setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());}setBackDepth(0);resetPB();setLocked(false);setRevealed(false);setCountedWrong(false);setCanOverrideCorrect(false);setPendingWrongOverride(null);setOverrideUsedThisQ(false);setCalcPenalty(false);setCalcOpen(false);wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current=null;saveStatsThisQRef.current=null;
+        // Date regen rule for Reset Stats:
+        //   - Timing visible (timingOff false): always regen — fresh stats need a fresh date.
+        //   - Timing hidden (timingOff true): keep the current date unless it's been burned
+        //     (wrong answer, Reveal, or Show Codes) — you haven't used it yet.
+        //   - Flash mid-date: always regen and return to the dash state, regardless of visibility.
+        const flashMidDate=mode==='flash'&&active;
+        if(!effectiveTimingOff||countedWrong||revealed||flashMidDate){setDate(genDate(minY,maxY));if(mode==="deduction")spawnDed();}
+        if(flashMidDate){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;setFlashRemainMs(flashMs);resetFlashBar();setActive(false);setShowTimerDate(false);}
+        tStartRef.current=performance.now();
+      };
+      const togglePerQBtn=()=>{if(active||timerDone)return;const newPerQ=!perQ;if(newPerQ&&allowMistakes)setAllowMistakes(false);setPerQ(newPerQ);};
+      const toggleAllowMistakesBtn=()=>{if(active||timerDone)return;const newAM=!allowMistakes;if(newAM&&perQ)setPerQ(false);setAllowMistakes(newAM);};
+      const canHideStats=["classic","deduction","flash"].includes(mode);
+      const effectiveScoringOff=canHideStats&&scoringOff;
+      const effectiveTimingOff=canHideStats&&timingOff;
+      useEffect(()=>{
+        if(mode!=="blitz")return;
+        const prev=blitzConfigPrevRef.current;
+        if(!active&&!timerDone&&(prev.perQ!==perQ||prev.allowMistakes!==allowMistakes)){
+          resetStatsCurrent();
+          setBlitzRoundStats(blankStats());
+          setStack([]);setForwardStack([]);setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());setBackDepth(0);
+          resetPB();setLocked(false);setRevealed(false);
+          setCountedWrong(false);setCanOverrideCorrect(false);setPendingWrongOverride(null);setOverrideUsedThisQ(false);
+          setCalcPenalty(false);setCalcOpen(false);
+          wrongTimeRef.current=null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current=null;
+          setDate(genDate(minY,maxY));tStartRef.current=performance.now();
+        }
+        blitzConfigPrevRef.current={perQ,allowMistakes};
+      },[perQ,allowMistakes,mode,active,timerDone]);
+      useEffect(()=>{
+        if(mode!=="blitz"||!timerDone)return;
+        // Save Stats: when off at round end, skip best update entirely.
+        if(!saveStats)return;
+        if(!perQ){
+          const bk=getBlitzBk();
+          const thisRoundId=blitzRoundIdRef.current++;
+          // Tracked so retro-override paths can determine whether the saved best
+          // belongs to THIS round (rollback applies) or an earlier round (skipped).
+          // See currentBlitzRoundIdRef declaration for the full rationale.
+          currentBlitzRoundIdRef.current=thisRoundId;
+          setBlitzBest(prev=>{
+            const cur=prev[bk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
+            const newScore=Math.max(cur.score,blitzRoundStats.good);
+            const newStreak=Math.max(cur.streak,blitzRoundStats.best);
+            const scoreImproved=newScore>cur.score;
+            const streakImproved=newStreak>cur.streak;
+            if(scoreImproved||streakImproved){setBlitzBestNew(p=>{const ent=p[bk]||{score:false,streak:false};return{...p,[bk]:{score:ent.score||scoreImproved,streak:ent.streak||streakImproved}};});}
+            if(newScore===cur.score&&newStreak===cur.streak)return prev;
+            return{...prev,[bk]:{
+              score:newScore,
+              streak:newStreak,
+              scoreRoundId:scoreImproved?thisRoundId:cur.scoreRoundId,
+              streakRoundId:streakImproved?thisRoundId:cur.streakRoundId,
+            }};
+          });
+        }else{
+          setSuddenBest(prev=>{
+            const sk=getSuddenBk();
+            const cur=prev[sk]??{score:0};
+            suddenBestSnapRef.current={key:sk,prev:{...cur}};
+            const newScore=Math.max(cur.score,S.good);
+            if(newScore>cur.score)setSuddenBestNew(p=>({...p,[sk]:true}));
+            if(newScore===cur.score)return prev;
+            return{...prev,[sk]:{score:newScore}};
+          });
+        }
+      },[mode,timerDone,perQ,allowMistakes,blitzSec,qSec,randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian]);
+      const applyCalcPenalty=()=>{setCalcPenalty(true);const roundOver=(mode==="blitz")&&!active;const fp=!countedWrong&&!revealed;if(fp&&!roundOver){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good};updateStats(c=>{c.played+=1;c.streak=0;});if(mode==="blitz"&&!perQ)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));}/* When back-browsing, skip markCorrect: history entries already have the correct day stamped via entryWithGreen using the date's original _jul snapshot. Re-stamping with live `correct` (which uses live useJulian) would add a second green if the live calendar setting differs from the snapshot. */if(backDepth===0){if(mode==="deduction"&&ded){markCorrect(getDedCorrectIdx());}else if(mode!=="deduction")markCorrect(correct);}if(isTimer(mode)&&active){setActive(false);setShowTimerDate(true);if(mode==="blitz"&&!perQ){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setTimerDone(true);}if(mode==="blitz"&&perQ){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setTimerDone(true);}if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;}}if(!revealed)setRevealed(true);if(!countedWrong){setCountedWrong(true);setCanOverrideCorrect(false);}};
+      const handleCalcOpenChange=next=>{if(next&&!(locked&&!revealed&&backDepth>0))applyCalcPenalty();setCalcOpen(next);};
+      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox";
+      const sAvg=calcAvg(S.times),sLast=calcLast(S.times),sMed=calcMed(S.times);
+      // Date format: one of 'written-mdy'|'written-dmy'|'numeric-mdy'|'numeric-dmy'|'numeric-ymd'.
+      // randomFormat overrides the selected format for game-mode dates only (Lookup + DEPLOY_TS ignore it).
+      const [dateFormat,setDateFormat]=useState('written-mdy');
+      const [randomFormat,setRandomFormat]=useState(true);
+      // Leap-year date generation settings (apply to all game modes; Lookup unaffected).
+      const [leapChance,setLeapChance]=useState('random');
+      const [janFebChance,setJanFebChance]=useState('random');
+      // julianChance: chance that a generated date falls in the Julian calendar period
+      // (pre-Oct 15, 1582). Option A semantics like leapChance/janFebChance. The 5-button
+      // row in the popover is locked when useJulian is off OR when the year range
+      // contains only Gregorian dates (minY >= 1583) or only Julian dates (maxY <= 1581).
+      // Year 1582 is mixed (Jan-Sep + Oct 1-4 are Julian; Oct 15+ + Nov + Dec are Gregorian),
+      // so a range that includes year 1582 always counts as mixed and the row is unlocked.
+      const [julianChance,setJulianChance]=useState('random');
+      // Blitz best keying: bests are siloed per difficulty configuration so a Best Score
+      // achieved at one config doesn't compare against rounds at a different config.
+      // Dimensions: duration (blitzSec for Per Round, qSec for Per Question), allowMistakes,
+      // format (random→'random' bucket, otherwise the specific format ID), leapChance,
+      // janFebChance, year range, useJulian. Changing any of these creates a fresh
+      // bucket; previous bests remain stored and reappear when the user switches back to
+      // that exact config. (perQ keys omit allowMistakes since perQ forces it false.)
+      const getBlitzBk=()=>`${allowMistakes?'m':'n'}${blitzSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
+      const getSuddenBk=()=>`${qSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
+      // FORMAT_IDS and rollFormat are defined at module scope (see top of file)
+      // so the dateByMode useState initializer can also use them.
+      // fmtDate: every date stamps _fmt (always present), so display always uses
+      // the date's stored format. Falls through to dateFormat only if a malformed
+      // legacy date without _fmt slips through (defensive).
+      const fmtDate=(y,m,d,storedFmt)=>fmt(y,m,d,storedFmt||dateFormat);
+      const fmtDatePartial=(y,m,d,storedFmt,missing)=>fmtPartial(y,m,d,storedFmt||dateFormat,missing);
+      // Generate a new game-mode date with the current settings baked in.
+      // Stamps _fmt and _jul at generation. _fmt is always present — random roll
+      // when randomFormat is on, current dateFormat when off. The display layer always
+      // trusts _fmt.
+      // On a Cat A unanswered untouched live date, format setting changes
+      // can trigger a fresh genDate call via regenDecisionFor (Random off→on always; Random
+      // on→off and dropdown changes regen only on _fmt mismatch with the now-active format).
+      // Wrong guesses defer format regen — the new format only applies on the next genDate.
+      // _jul is the calendar system in effect when the date was generated; used by stack
+      // entries (and deduction) so revisiting a past question shows codes consistent with
+      // the system that was active when it was created. Live questions ignore _jul and use
+      // current useJulian, so toggling Julian on a live (un-guessed) date updates the answer.
+      const genDate=(lo,hi)=>{
+        const dt=randomDate(lo,hi,useJulian,leapChance,janFebChance,julianChance);
+        dt._fmt=randomFormat?rollFormat():dateFormat;
+        dt._jul=useJulian;
+        return dt;
+      };
+      // Permanent leap/range violations make a date invalid in any mode (current OR not).
+      // Always-regen settings (Date Format / Random Format / Leap Chance) and Force Jan/Feb
+      // and year range and Julian each have their own per-mode rules — see the unified effect below.
+      const isPermanentlyViolating=(dt)=>{
+        if(!dt)return false;
+        const isLeapY=(useJulian&&isJulianDate(dt.y,dt.m,dt.d))?isLeapJulian(dt.y):isLeap(dt.y);
+        if(leapChance==='100'&&!isLeapY)return true;
+        if(janFebChance==='100'&&isLeapY&&dt.m!==1&&dt.m!==2)return true;
+        // julianChance hard values mean the date MUST be Julian (100) or MUST NOT be Julian (0
+        // is not exposed in UI but treated parallel). Only '100' is a strict violation since the
+        // intermediate values are probabilistic and accept any output. The check is gated on
+        // useJulian — if Julian calendar is off, julianChance has no meaning and never violates.
+        if(useJulian&&julianChance==='100'&&!isJulianDate(dt.y,dt.m,dt.d))return true;
+        if(dt.y<minY||dt.y>maxY)return true;
+        return false;
+      };
+      // Year sub-mode playability check. Year requires either:
+      //   (a) a year-range size of at least 5 (so a normal N=5 window can be built within
+      //       a single calendar system), OR
+      //   (b) a Jul Cross window (N=2) — Julian on AND the range contains a boundary pair
+      //       {1582, 1583} (for Jan-Sep + Oct1-4 dates) or {1581, 1582} (for Oct15+ + Nov + Dec).
+      // When neither condition holds, Year sub-mode is unbuildable. The Year sub-type button
+      // disables itself, and if the user is currently in Year mode and the range/Julian
+      // changes mid-session to make it unbuildable, the popover effect auto-switches to Day.
+      // Day and Month sub-modes work for any range >= 1 year (no minimum), so they're always
+      // available.
+      const yearSubPossible=(()=>{
+        const lo=Math.max(1,minY),hi=maxY;
+        if(hi-lo+1>=5)return true;
+        if(!useJulian)return false;
+        const has1581=lo<=1581&&hi>=1581,has1582=lo<=1582&&hi>=1582,has1583=lo<=1583&&hi>=1583;
+        return(has1582&&has1583)||(has1581&&has1582);
+      })();
+      // Track previous popover values so the unified effect can tell which setting changed.
+      const prevPopRef=useRef({randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance});
+      // Unified popover-settings effect.
+      // Per-setting rules in idle Cat A states (Classic, Deduction, Flash idle, Blitz pre-round):
+      //   Random Format — any toggle (either direction) regens an unanswered date (Bug #1)
+      //   Date Format dropdown — any change regens an unanswered date (Bug #1)
+      //   Leap Chance — always regen
+      //   Force Jan/Feb — always regen on toggle (Bug #3b; was previously gated on date content)
+      //   Year range — always regen on any range edit
+      //   Julian — keep date (answer/codes float to current useJulian) unless current date is
+      //            Julian-eligible AND a wrong guess has been made → regen
+      //   In all of the above, a wrong guess (countedWrong, which also covers Reveal and
+      //   codes-shown via applyCalcPenalty) on the live date defers any regen — the question
+      //   is finished first, and the new setting applies on the next generate. (Julian on a
+      //   wrong-guessed Julian-eligible date is the carve-out: it regens with a synthesized
+      //   green for the original-Julian correct answer.)
+      // Cat B (Blitz active timer): always full reset on any popover change (incl. format).
+      // Cat C (Blitz timerDone): never auto-regen. Stale stored dates in non-current modes
+      //   that are *permanently violating* (leap-100/jan-feb/range) are still cleaned up.
+      // Bug #1 also extends cleanseNonCurrent: format-setting changes regen any FRESH
+      //   (unanswered, untouched) stored dates in non-current modes (Classic, Flash, Blitz
+      //   pre-round, Deduction per sub-type), so the user doesn't return to a previously-
+      //   seen date in a now-mismatched format. Burned non-current dates are preserved.
+      // Flash mid-dash is Cat A: a regen tears down the dash + lands at idle with the new date.
+      // AoX is owned by AoxMode's internal effect, which mirrors this logic.
+      useEffect(()=>{
+        const prev=prevPopRef.current;
+        const dateFormatChanged=prev.dateFormat!==dateFormat;
+        const randomFormatChanged=prev.randomFormat!==randomFormat;
+        const leapChanceChanged=prev.leapChance!==leapChance;
+        const janFebChanceChanged=prev.janFebChance!==janFebChance;
+        const julianChanceChanged=prev.julianChance!==julianChance;
+        const yearRangeChanged=prev.minY!==minY||prev.maxY!==maxY;
+        const julianChanged=prev.useJulian!==useJulian;
+        prevPopRef.current={randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance};
+        // E: auto-switch out of Year sub-mode if the range/Julian change just made it unbuildable.
+        // We do this BEFORE the rest of the effect so the regen that follows sees the new dedType.
+        // The dedType-watching effect handles spawning a fresh Day puzzle on the next render.
+        if(mode==='deduction'&&dedType==='year'&&!yearSubPossible){changeDedType('day');return;}
+        // Auto-clear Deduction toggles when their prerequisites break.
+        // (These don't gate the regen decision below — they're a separate concern from
+        // the date's per-setting regen rules. The toggle UI also shows them as disabled,
+        // but clearing the state ensures spawnDed sees the cleared value.)
+        if(julianChanged&&!useJulian){
+          if(julCrossOnly)setJulCrossOnly(false);
+          if(monthOnly1582)setMonthOnly1582(false);
+        }
+        if(yearRangeChanged){
+          // Jul Cross requires 1581-1583 in range
+          if(julCrossOnly&&(1581<minY||1583>maxY))setJulCrossOnly(false);
+          // 1582 Only requires 1582 in range
+          if(monthOnly1582&&(1582<minY||1582>maxY))setMonthOnly1582(false);
+          // ab Cross requires range to span at least one 100-year boundary
+          if(abCrossOnly&&Math.floor(Math.max(1,minY)/100)===Math.floor(maxY/100))setAbCrossOnly(false);
+        }
+        const anyChanged=dateFormatChanged||randomFormatChanged||leapChanceChanged||janFebChanceChanged||julianChanceChanged||yearRangeChanged||julianChanged;
+        if(!anyChanged)return;
+        // regenDecisionFor inspects a candidate live date+wrong-status and returns one of:
+        //   'none'             — no regen (either no rule fired, or defer because a wrong
+        //                        guess was made and the change isn't the Julian carve-out)
+        //   'normal'           — regen with no special handling
+        //   'julianWithGreen'  — regen, and when pushing the previous live to history,
+        //                        synthesize a green entry for the day that was correct
+        //                        under the date's ORIGINAL Julian state, so the history
+        //                        entry shows both the user's red guess and the original
+        //                        green answer. Only fires when a Julian toggle would
+        //                        change the answer on a Julian-eligible wrong-guessed date.
+        // All reasons defer when hasWrong is true (julian carve-out aside) — finishing
+        // the current question takes priority over re-shuffling its presentation.
+        //   a — leapChanceChanged: always
+        //   b — janFebChanceChanged: always (was Force Jan/Feb boolean toggle pre-chance-rewrite;
+        //         any value change in the new 5-button chance row regens an unanswered date,
+        //         burned dates defer like everything else)
+        //   c — yearRangeChanged: always regen on any range edit
+        //   d — julianChanged + current date is Julian-eligible (carve-out: still fires when
+        //         hasWrong, with synthesized green; outside that, deferred like the rest)
+        //   e — randomFormatChanged (either direction): always (Bug #1 — was previously gated
+        //         on _fmt mismatch when off→on; now any RF toggle regens unanswered dates)
+        //   f — dateFormatChanged (regardless of randomFormat state): always (Bug #1 — was
+        //         previously a no-op when randomFormat was on AND gated on _fmt mismatch;
+        //         now any format setting change regens unanswered dates uniformly)
+        //   g — julianChanceChanged: always regen on any chance value change (parallel to
+        //         janFebChanceChanged; the Julian Chance row only takes effect when useJulian
+        //         is on, but a value change still regens to apply the new distribution)
+        // Bug #1 also extends cleanseNonCurrent below: when a format setting changes, any
+        // non-current mode's stored date that is "fresh" (no burn state in preservedByModeRef)
+        // is also regenerated, so the user doesn't return to a previously-seen date.
+        const regenDecisionFor=(dt,hasWrong)=>{
+          if(!dt)return'none';
+          const aReason=leapChanceChanged;
+          const bReason=janFebChanceChanged;
+          const cReason=yearRangeChanged;
+          const dReason=julianChanged&&isJulianDate(dt.y,dt.m,dt.d);
+          const eReason=randomFormatChanged;
+          const fReason=dateFormatChanged;
+          const gReason=julianChanceChanged;
+          if(hasWrong)return dReason?'julianWithGreen':'none';
+          return(aReason||bReason||cReason||eReason||fReason||gReason)?'normal':'none';
+        };
+        const formatSettingChanged=randomFormatChanged||dateFormatChanged;
+        // Helper: cleanup non-current-mode storage. Always handles permanently-violating
+        // dates (out of range, leap-100, jan-feb force). Bug #1: also regens fresh
+        // (unanswered, untouched) dates in non-current modes when a format setting just
+        // changed, so the user doesn't return to a date they've already seen.
+        //   "Fresh" for App-side modes = no preservedByModeRef entry OR an entry with empty
+        //   persistBtns and no burn flags. preservedByModeRef holds the last-saved state
+        //   from when the user left that mode; absence means the mode was last in a fresh
+        //   state, presence with empty btns/flags means same.
+        //   "Fresh" for Deduction sub-types = no saved entry OR saved entry with empty btns.
+        const isFreshClassicFlash=(m)=>{
+          const pe=preservedByModeRef.current[m];
+          if(!pe)return true;
+          const btnsEmpty=!pe.persistBtns||Object.keys(pe.persistBtns).length===0;
+          return btnsEmpty&&!pe.countedWrong&&!pe.locked&&!pe.revealed;
+        };
+        const isFreshDedSub=(sd)=>{
+          if(!sd||!sd.ded)return true;
+          const btns=sd.ded.btns||sd.btns||{};
+          return Object.keys(btns).length===0&&!sd.countedWrong&&!sd.locked&&!sd.revealed;
+        };
+        const cleanseNonCurrent=(skipCurrentGm,skipCurrentDed)=>{
+          // CRITICAL (Bug #5 follow-up): we must update BOTH dateByMode[m] AND
+          // preservedByModeRef.current[m].date for non-current Classic/Flash modes. The
+          // mode-switch useLayoutEffect's restore path reads from preservedByModeRef when
+          // arrivedTimingOff is true (which is the DEFAULT for Classic and Deduction), and
+          // applies it via setDate(preservedQ.date) — silently overwriting dateByMode with
+          // the stale date. Without the preservedByModeRef sync, this entire format-regen
+          // cleanse is invisible to the user in the most common case.
+          // Step 1: pre-compute the regen decisions and new dates so both setDateByMode and
+          // the preservedByModeRef sync use the same values (avoids double-call hazards from
+          // React strict mode running functional updaters twice).
+          const newDates={};
+          for(const m of ['classic','flash','blitz']){
+            if(skipCurrentGm===m)continue;
+            const cur=dateByMode[m];
+            if(!cur)continue;
+            if(isPermanentlyViolating(cur)){
+              newDates[m]=genDate(minY,maxY);
+            }else if(formatSettingChanged){
+              if(m==='blitz'){
+                // Blitz pre-round only (not active, not timerDone).
+                if(!active&&!timerDone)newDates[m]=genDate(minY,maxY);
+              }else if(isFreshClassicFlash(m)){
+                newDates[m]=genDate(minY,maxY);
+              }
+            }
+          }
+          // Step 2: apply to dateByMode.
+          if(Object.keys(newDates).length>0){
+            setDateByMode(p=>{const next={...p};for(const m in newDates)next[m]=newDates[m];return next;});
+          }
+          // Step 3: sync preservedByModeRef.current[m].date for Classic/Flash. Also clean up
+          // permanently-violating preserved dates (previous behavior).
+          for(const m of ['classic','flash']){
+            if(skipCurrentGm===m)continue;
+            const pe=preservedByModeRef.current[m];
+            if(!pe?.date)continue;
+            if(isPermanentlyViolating(pe.date)){delete preservedByModeRef.current[m];}
+            else if(newDates[m]){preservedByModeRef.current[m]={...pe,date:{...newDates[m]}};}
+          }
+          // Step 4: Deduction sub-types — clear stale entries so the dedType watcher
+          // re-spawns a fresh puzzle on next visit. Both permanently-violating and
+          // format-stale fresh entries are cleared.
+          setSavedDedByType(p=>{
+            let changed=false;const next={...p};
+            for(const k of Object.keys(p)){
+              if(skipCurrentDed&&k===dedType)continue;
+              const sd=p[k];
+              if(!sd?.ded)continue;
+              if(isPermanentlyViolating({y:sd.ded.y,m:sd.ded.m,d:sd.ded.d})){next[k]=null;changed=true;}
+              else if(formatSettingChanged&&isFreshDedSub(sd)){next[k]=null;changed=true;}
+            }
+            return changed?next:p;
+          });
+        };
+        // Cat C: Blitz post-round (timerDone) — never auto-regen current; only cleanse stale storage.
+        if(mode==='blitz'&&timerDone){cleanseNonCurrent(null,false);return;}
+        // Cat B: Blitz active — full round reset on any change.
+        if(mode==='blitz'&&active){
+          arm();
+          setDateByMode(p=>{const next={...p,blitz:genDate(minY,maxY)};for(const m of ['classic','flash']){if(next[m]&&isPermanentlyViolating(next[m]))next[m]=genDate(minY,maxY);}return next;});
+          for(const m of ['classic','flash']){const pe=preservedByModeRef.current[m];if(pe?.date&&isPermanentlyViolating(pe.date))delete preservedByModeRef.current[m];}
+          setSavedDedByType(p=>{let changed=false;const next={...p};for(const k of Object.keys(p)){const sd=p[k];if(sd?.ded&&isPermanentlyViolating({y:sd.ded.y,m:sd.ded.m,d:sd.ded.d})){next[k]=null;changed=true;}}return changed?next:p;});
+          if(ded&&isPermanentlyViolating({y:ded.y,m:ded.m,d:ded.d}))spawnDed();
+          return;
+        }
+        // Cat A: regen logic for Classic, Flash, Deduction, Blitz pre-round.
+        // The "live" date is what gets regenerated. When back-browsing, the live date
+        // is the bottom-of-stack entry of the forward stack (with isLive:true); the
+        // currently-displayed date is a historical entry that survives via
+        // history-reconstruction. When not back-browsing, live == displayed.
+        const isBackBrowsing=backDepth>0;
+        const fwdStack=mode==='deduction'?(dedForwardStack[dedType]||[]):forwardStack;
+        let liveDt=null,liveHasWrong=false,liveEntry=null,liveBtns={};
+        if(isBackBrowsing&&fwdStack[0]&&fwdStack[0].isLive){
+          liveEntry=fwdStack[0];
+          liveDt={y:liveEntry.y,m:liveEntry.m,d:liveEntry.d,_fmt:liveEntry._fmt,_jul:liveEntry._jul};
+          liveHasWrong=!!(liveEntry.liveState&&liveEntry.liveState.countedWrong);
+          liveBtns=liveEntry.btns||{};
+        }else if(!isBackBrowsing){
+          if(mode==='deduction'){
+            liveDt=ded?{y:ded.y,m:ded.m,d:ded.d,_fmt:ded._fmt,_jul:ded._jul}:null;
+          }else{
+            liveDt=dateByMode[mode]||null;
+          }
+          liveHasWrong=countedWrong;
+          liveBtns=persistBtns;
+        }
+        const decision=regenDecisionFor(liveDt,liveHasWrong);
+        if(decision==='none'){
+          // Defer (or genuinely no-op): keep the current state untouched. Skip current
+          // mode in the cleanse so a deferred wrong-state isn't silently overwritten.
+          cleanseNonCurrent(mode,mode==='deduction');
+          return;
+        }
+        // Build history insertions: when back-browsing, push the displayed entry plus
+        // every non-live forward entry (in correct chronological order). When the
+        // decision is julianWithGreen, also push the live entry with a synthesized
+        // green for the original-Julian correct answer — preserving both red and green
+        // in history. The live forward entry itself is otherwise discarded (its slot
+        // is being regenerated).
+        const insertions=[];
+        if(isBackBrowsing){
+          const dispCapsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+          if(mode==='deduction'){
+            insertions.push(entryWithGreen({...(ded||{}),btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:dispCapsule,hasCredit:browseHasCredit},useJulian));
+          }else{
+            insertions.push(entryWithGreen({...date,btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:dispCapsule,hasCredit:browseHasCredit},useJulian));
+          }
+          for(let i=fwdStack.length-1;i>=1;i--){
+            const e=fwdStack[i];
+            const{isLive:_il,liveState:_ls,...rest}=e;
+            insertions.push(rest);
+          }
+        }
+        if(decision==='julianWithGreen'&&liveDt){
+          // Live frozen Save Stats: if the wrong was made with Save Stats OFF
+          // (frozen-OFF), the question was never going to enter history; skip
+          // the synthesis push so the question silently disappears, matching
+          // pushAndNext's frozen-OFF behavior.
+          const liveFrozen=isBackBrowsing
+            ?(liveEntry.liveState?liveEntry.liveState.saveStatsFrozen:undefined)
+            :saveStatsThisQRef.current;
+          // null/undefined ⇒ never frozen yet ⇒ treat as live saveStats; otherwise
+          // honor the frozen value.
+          const liveSaved=liveFrozen===null||liveFrozen===undefined?saveStats:liveFrozen;
+          if(liveSaved){
+            // Use the date's original Julian snapshot to compute the correct day at the
+            // time it was first generated; fall back to prev.useJulian if the snapshot
+            // is missing (older state from before _jul tracking).
+            const origJul=(liveDt._jul!=null?liveDt._jul:prev.useJulian)&&isJulianDate(liveDt.y,liveDt.m,liveDt.d);
+            const correctIdx=origJul?wdayJulian(liveDt.y,liveDt.m,liveDt.d):wday(liveDt.y,liveDt.m,liveDt.d);
+            // Downgrade any 'wrong-latest' to 'wrong-prev' so the dim-with-green
+            // rendering applies to all reds in the synthesized history entry.
+            const synthBtns={...liveBtns};
+            for(const k in synthBtns){if(synthBtns[k]==='wrong-latest')synthBtns[k]='wrong-prev';}
+            synthBtns[correctIdx]='correct';
+            const cap=isBackBrowsing
+              ?(liveEntry.capsule||{snapshot:null,wrongTime:null})
+              :{snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+            insertions.push({
+              y:liveDt.y,m:liveDt.m,d:liveDt.d,_fmt:liveDt._fmt,_jul:liveDt._jul,
+              btns:synthBtns,
+              overrideUsed:isBackBrowsing?(liveEntry.overrideUsed||false):overrideUsedThisQ,
+              capsule:cap,
+              hasCredit:false,
+            });
+          }
+        }
+        // Apply stack/forward changes
+        if(mode==='deduction'){
+          if(insertions.length>0)setDedStack(s=>({...s,[dedType]:[...(s[dedType]||[]),...insertions]}));
+          setDedForwardStack(s=>({...s,[dedType]:[]}));
+        }else{
+          if(insertions.length>0)setStack(s=>[...s,...insertions]);
+          setForwardStack([]);
+        }
+        // Full per-question state reset (matches "New" semantics)
+        resetPB();setLocked(false);setRevealed(false);
+        setCountedWrong(false);setCanOverrideCorrect(false);setOverrideUsedThisQ(false);
+        setPendingWrongOverride(null);setCalcPenalty(false);setCalcOpen(false);
+        setBackDepth(0);
+        prevStatsSnapshotRef.current=null;
+        preCalcPenaltySnapshotRef.current=null;
+        wrongTimeRef.current=null;
+        saveStatsThisQRef.current=null;
+        // Branch-specific: generate fresh date / spawn ded / Flash mid-dash teardown.
+        if(mode==='flash'&&active){
+          setActive(false);setShowTimerDate(false);
+          clearTimeout(flashTimerRef.current);flashTimerRef.current=null;
+          setFlashPhase("dash");flashDeadlineRef.current=null;
+          setFlashRemainMs(flashMs);resetFlashBar();
+          setDateByMode(p=>({...p,flash:genDate(minY,maxY)}));
+          tStartRef.current=null;
+        }else if(mode==='deduction'){
+          spawnDed();
+          tStartRef.current=performance.now();
+        }else{
+          // Classic, Flash idle, Blitz pre-round
+          setDateByMode(p=>({...p,[mode]:genDate(minY,maxY)}));
+          tStartRef.current=performance.now();
+        }
+        cleanseNonCurrent(mode,mode==='deduction');
+      },[randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance]);
+      // Per-mode Deduction toggle effect. Watches abCrossOnly, julCrossOnly, monthOnly1582
+      // and regenerates the current Deduction puzzle when relevant. Only fires when in
+      // Deduction mode with the corresponding sub-mode.
+      // Behavior mirrors popover Cat A: if a wrong has been made on the live entry, defer
+      // (preserve wrong-state); otherwise regen with full per-question reset.
+      //
+      // Interaction with the popover effect: when the user turns off Julian via the popover
+      // while a Year/Month toggle is active (e.g., julCrossOnly=true), the popover effect
+      // auto-clears the toggle via setJulCrossOnly(false). On the next render, this effect
+      // fires (toggle changed true→false) and regenerates the puzzle a SECOND time. The
+      // popover effect's own regen ran first using the not-yet-cleared toggle value but with
+      // the new useJulian=false, which causes its julCrossPossible check to evaluate false →
+      // enforce=null → normal puzzle. So both regens produce equivalent normal puzzles; the
+      // double-fire is wasted compute but functionally correct (no history corruption,
+      // matching end state). Trying to suppress the second fire risks breaking the toggle's
+      // own user-initiated regens, so we accept the small waste.
+      const prevDedTogglesRef=useRef({abCrossOnly,julCrossOnly,monthOnly1582});
+      useEffect(()=>{
+        const prev=prevDedTogglesRef.current;
+        const abChanged=prev.abCrossOnly!==abCrossOnly;
+        const julChanged=prev.julCrossOnly!==julCrossOnly;
+        const m1582Changed=prev.monthOnly1582!==monthOnly1582;
+        prevDedTogglesRef.current={abCrossOnly,julCrossOnly,monthOnly1582};
+        if(!(abChanged||julChanged||m1582Changed))return;
+        if(mode!=='deduction')return;
+        const yearRelevant=(abChanged||julChanged)&&dedType==='year';
+        const monthRelevant=m1582Changed&&dedType==='month';
+        if(!yearRelevant&&!monthRelevant)return;
+        // Determine if there's a wrong on the live entry; if so, defer.
+        const isBackBrowsing=backDepth>0;
+        const fwdForType=dedForwardStack[dedType]||[];
+        const liveHasWrong=isBackBrowsing
+          ?!!(fwdForType[0]&&fwdForType[0].isLive&&fwdForType[0].liveState&&fwdForType[0].liveState.countedWrong)
+          :countedWrong;
+        if(liveHasWrong)return;
+        // Push current displayed entry + non-live forwards to history (mirror popover effect)
+        if(isBackBrowsing){
+          const insertions=[];
+          const dispCapsule={snapshot:prevStatsSnapshotRef.current?{...prevStatsSnapshotRef.current}:null,wrongTime:wrongTimeRef.current};
+          insertions.push(entryWithGreen({...(ded||{}),btns:{...persistBtns},overrideUsed:overrideUsedThisQ,capsule:dispCapsule,hasCredit:browseHasCredit},useJulian));
+          for(let i=fwdForType.length-1;i>=1;i--){
+            const e=fwdForType[i];
+            const{isLive:_il,liveState:_ls,...rest}=e;
+            insertions.push(rest);
+          }
+          if(insertions.length>0)setDedStack(s=>({...s,[dedType]:[...(s[dedType]||[]),...insertions]}));
+          setDedForwardStack(s=>({...s,[dedType]:[]}));
+        }
+        // Full per-question state reset
+        resetPB();setLocked(false);setRevealed(false);
+        setCountedWrong(false);setCanOverrideCorrect(false);setOverrideUsedThisQ(false);
+        setPendingWrongOverride(null);setCalcPenalty(false);setCalcOpen(false);
+        setBackDepth(0);
+        prevStatsSnapshotRef.current=null;
+        preCalcPenaltySnapshotRef.current=null;
+        wrongTimeRef.current=null;
+        saveStatsThisQRef.current=null;
+        spawnDed();
+        tStartRef.current=performance.now();
+      },[abCrossOnly,julCrossOnly,monthOnly1582]);
+      const [settingsOpen,setSettingsOpen]=useState(false);
+      const settingsRef=useRef(null);
+      const settingsPopoverRef=useRef(null);
+      // Full Reset state: armed=true means the user tapped once and the next tap fires.
+      // Auto-disarms after a short timer, when settings closes, or when the user taps any
+      // other interactive control inside the popover. Implemented as a per-tap state machine
+      // rather than a dialog so the destructive nature is communicated by the in-place label
+      // and color change without a modal interruption.
+      const [fullResetArmed,setFullResetArmed]=useState(false);
+      const fullResetBtnRef=useRef(null);
+      const fullResetTimerRef=useRef(null);
+      // aoxIsFresh — reported up from AoxMode via the onFreshChange prop. AoxMode's ~24
+      // internal state fields are otherwise opaque to the App, so we mirror their combined
+      // freshness state here to use in isFullyReset (the Full Reset dim/lock check below).
+      // Initialized to true (matches fresh-mount reality); AoxMode's useEffect calls
+      // onFreshChange on every freshness flip so this stays in sync.
+      const [aoxIsFresh,setAoxIsFresh]=useState(true);
+      // AoxMode is always-mounted-with-display-none (rather than conditionally rendered) so its
+      // internal state persists across mode switches — that's intentional UX (a paused AoX
+      // run survives a detour into Classic). But it means none of AoxMode's ~25 useStates and
+      // refs auto-reset when fullReset switches mode away from 'aox'. Solution: bump this key
+      // in fullReset to force a one-shot AoxMode remount, which runs all its useState/useRef
+      // initializers fresh. Normal mode switching doesn't change this key, so the cross-mode
+      // persistence behavior is preserved everywhere except the explicit Full Reset path.
+      const [aoxResetKey,setAoxResetKey]=useState(0);
+      // Scroll-state tracking for the settings popover inner scroll wrapper.
+      // Popover inner scroll state. Three flags drive the visual edge indicators:
+      //   popoverScrolledFromTop → top fade (no shadow at top — no fixed UI there)
+      //   popoverAtBottom        → bottom fade + sticky footer shadow (both signal "more below")
+      // Defaults: scrolledFromTop false, atBottom true (no indicators on first open before
+      // the listener evaluates). The two fade flags combine into fade-scroll-both when both apply.
+      const popoverInnerScrollRef=useRef(null);
+      const [popoverAtBottom,setPopoverAtBottom]=useState(true);
+      const [popoverScrolledFromTop,setPopoverScrolledFromTop]=useState(false);
+      useEffect(()=>{
+        if(!settingsOpen){setPopoverAtBottom(true);setPopoverScrolledFromTop(false);return;}
+        const el=popoverInnerScrollRef.current;if(!el)return;
+        const evaluate=()=>{
+          const noOverflow=el.scrollHeight<=el.clientHeight+1;
+          setPopoverAtBottom(noOverflow||el.scrollTop+el.clientHeight>=el.scrollHeight-4);
+          setPopoverScrolledFromTop(!noOverflow&&el.scrollTop>0);
+        };
+        evaluate();
+        el.addEventListener('scroll',evaluate,{passive:true});
+        const ro=new ResizeObserver(evaluate);
+        ro.observe(el);
+        return()=>{el.removeEventListener('scroll',evaluate);ro.disconnect();};
+      },[settingsOpen]);
+      // Settings popover click-outside handler. Closes settings when the user taps
+      // anywhere outside three regions: the gear button itself (settingsRef), the
+      // popover content (settingsPopoverRef), and the mode CustomSelect wrapper
+      // (modeSelectRef). The mode CustomSelect exclusion is what lets the user open
+      // and pick from the mode dropdown without the settings popover auto-closing
+      // on the same tap — taps inside the mode trigger or its open dropdown panel
+      // are inside modeSelectRef's subtree and therefore "inside" for this check.
+      useEffect(()=>{if(!settingsOpen)return;const h=e=>{const inBtn=settingsRef.current&&settingsRef.current.contains(e.target);const inPop=settingsPopoverRef.current&&settingsPopoverRef.current.contains(e.target);const inSel=modeSelectRef.current&&modeSelectRef.current.contains(e.target);
+        // Mousedown on the browser scrollbar registers e.target as <html> on Windows. Ignore that
+        // case so dragging the scrollbar doesn't close the popover.
+        const onScrollbar=e.target===document.documentElement||e.target===document.body;
+        if(onScrollbar)return;
+        if(!inBtn&&!inPop&&!inSel){
+          // Year-range inputs (and any future input in the popover) commit on blur. When closing
+          // settings via click-outside on a non-focusable element, the input keeps focus until
+          // the popover unmounts — and React's synthetic onBlur doesn't reliably fire on unmount,
+          // so the typed value gets dropped. Programmatically blur first so onBlur runs
+          // synchronously (commit), then close. (Mobile happens to work without this because
+          // tapping a non-focusable target on touch normally fires blur before touchstart.)
+          const ae=document.activeElement;
+          if(ae&&ae.tagName==='INPUT'&&settingsPopoverRef.current&&settingsPopoverRef.current.contains(ae))ae.blur();
+          setSettingsOpen(false);
+        }};document.addEventListener('mousedown',h);document.addEventListener('touchstart',h);return()=>{document.removeEventListener('mousedown',h);document.removeEventListener('touchstart',h);};},[settingsOpen]);
+      // Escape closes the settings popover. Doesn't fire when an input has focus that already
+      // handles Escape (year-range inputs revert their value on Escape) — those handlers call
+      // stopPropagation isn't used, so this listener still receives the event after the input's
+      // handler runs. To avoid double-handling, we check the active element type.
+      useEffect(()=>{if(!settingsOpen)return;const h=e=>{if(e.key!=="Escape")return;const ae=document.activeElement;if(ae&&ae.tagName==="INPUT")return;e.preventDefault();setSettingsOpen(false);};document.addEventListener('keydown',h);return()=>document.removeEventListener('keydown',h);},[settingsOpen]);
+      // Theme option arrays — keys match the CustomSelect API (value/label) so
+      // they can be passed directly without per-render mapping.
+      const DARK_THEMES=[{value:'dusk',label:'Dusk'},{value:'midnight',label:'Midnight'},{value:'nebula',label:'Nebula'}];
+      const LIGHT_THEMES=[{value:'light',label:'Light'},{value:'parchment',label:'Parchment'}];
+      const ALL_THEMES_LABELED=[{value:'dusk',label:'Dusk (dark)'},{value:'midnight',label:'Midnight (dark)'},{value:'nebula',label:'Nebula (dark)'},{value:'light',label:'Light (light)'},{value:'parchment',label:'Parchment (light)'}];
+      // Resets every setting in the ⚙ popover to its initial useState default.
+      // Does NOT touch mode-specific config outside the popover (AoX N, timer durations,
+      // Deduction sub-types/toggles) or stats/history (Reset Stats handles that).
+      // Triggers the unified popover-settings effect, which will regenerate the current
+      // date as appropriate (Random Format / Date Format / Leap Chance are always-regen).
+      const resetSettings=()=>{
+        setRandomFormat(true);
+        setDateFormat('written-mdy');
+        setUseJulian(true);
+        setMinY(1);setMaxY(10000);
+        setMinInputVal("1");setMaxInputVal("10000");
+        setLeapChance('random');
+        setJanFebChance('random');
+        setJulianChance('random');
+        setSaveStats(true);
+        setUseSystem(true);
+        setDarkTheme("dusk");
+        setLightTheme("light");
+        setManualTheme("dusk");
+      };
+      // Full Reset — wipes everything to the initial launch state. Every single piece of mutable
+      // state in the app must be considered when modifying this function. Categories:
+      //   1. EXPLICIT in this function:
+      //      a. App-level useState (statsByMode, history stacks, every per-mode toggle, settings,
+      //         theme, lookup, dates, etc.)
+      //      b. App-level useRefs (timer IDs, snapshots, mode-tracking, settings-diff trackers,
+      //         display caches) — these don't reset just by changing state
+      //      c. Active setTimeouts — must clearTimeout BEFORE state changes so stale callbacks
+      //         don't fire during the reset (would mutate state we just cleared)
+      //      d. DOM-attached bar refs — direct style/textContent reset for visual snap-back
+      //      e. window scroll — back to top
+      //      f. AoxMode key bump — AoxMode is always-mounted (display:none when not visible)
+      //         so its ~25 internal useStates and refs DON'T auto-reset on mode change. The
+      //         key bump forces a remount, which runs all its hook initializers fresh.
+      //   2. AUTO-RESET via component unmount (NO action needed):
+      //      a. LookupCard internal state — conditionally rendered (mode==='lookup'), unmounts
+      //         on mode change to 'classic'
+      //      b. GuidePage and all GuideSection [open] flags — conditionally rendered
+      //         (mode==='guide'), unmount on mode change
+      //      c. Theme/Format CustomSelect inside Settings popover — unmount when settings closes
+      //      d. MethodBreakdownSection in Deduction/Lookup — inside conditional containers
+      //         that unmount with their parents; the always-rendered Classic/Flash/Blitz one
+      //         is keyed by mode so it remounts on any mode change
+      // Order of operations:
+      //   1. clearTimeout — stop in-flight callbacks
+      //   2. Ref assignments — synchronous, set immediately
+      //   3. setState calls — batched, applied together at end of event (includes the
+      //      aoxResetKey bump, which causes AoxMode to remount as part of the same render)
+      //   4. DOM mutations on bar refs — synchronous
+      //   5. window.scrollTo — synchronous
+      // Deliberately NOT a location.reload() — when memory, profiles, or offline state are
+      // added later, fullReset stays the single source of truth for "back to launch state".
+      const fullReset=()=>{
+        // 1. Cancel active timers so stale callbacks don't fire during the reset.
+        if(flashClearRef.current){clearTimeout(flashClearRef.current);flashClearRef.current=null;}
+        if(flashTimerRef.current){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;}
+        if(dedFlashClearRef.current){clearTimeout(dedFlashClearRef.current);dedFlashClearRef.current=null;}
+        flashDeadlineRef.current=null;
+        // 2. Reset transient refs that the rest of the app reads directly (without going through state).
+        //    Per-question / timing refs:
+        tStartRef.current=null;
+        wrongTimeRef.current=null;
+        prevStatsSnapshotRef.current=null;
+        saveStatsThisQRef.current=null;
+        preCalcPenaltySnapshotRef.current=null;
+        timingArmedRef.current=false;
+        if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}
+        suddenBestSnapRef.current=null;
+        timerDoneSnapRef.current=null;
+        pendingDedSwitchRef.current=null;
+        //    Mode-tracking refs (set to "classic" since that's the new mode):
+        prevModeRef.current="classic";
+        prevModeForSwitchRef.current="classic";
+        prevNonGuideModeRef.current="classic";
+        preservedByModeRef.current={};
+        stacksByModeRef.current={};
+        //    Blitz timer / round refs:
+        blitzStartRef.current=null;
+        blitzPausedAtRef.current=null;
+        blitzPausedAccRef.current=0;
+        blitzRemainRef.current=60;
+        qDeadlineRef.current=null;
+        qPausedAtRef.current=null;
+        qPausedAccRef.current=0;
+        blitzRoundIdRef.current=1;
+        currentBlitzRoundIdRef.current=null;
+        blitzConfigPrevRef.current={perQ:false,allowMistakes:true};
+        blitzDisplayRef.current={width:"100%",text:""};
+        suddenDisplayRef.current={width:"100%",text:""};
+        //    Settings/popover diff refs (set to defaults so the popover effect doesn't see a
+        //    stale "previous" and trigger a stray regen against it):
+        prevPopRef.current={randomFormat:true,dateFormat:'written-mdy',useJulian:true,minY:1,maxY:10000,leapChance:'random',janFebChance:'random',julianChance:'random'};
+        prevDedTogglesRef.current={abCrossOnly:false,julCrossOnly:false,monthOnly1582:false};
+        //    Misc:
+        // (scroll-lock ref removed — #root is permanently fixed now, no ref to reset)
+        // 3. State setters (batched). Mode + overlays first.
+        setMode("classic");
+        setSettingsOpen(false);
+        setAppAtBottom(true);
+        setAppScrolledFromTop(false);
+        // All stats wiped
+        setStatsByMode({classic:blankStats(),blitz:blankStats(),flash:blankStats(),"deduction-day":blankStats(),"deduction-month":blankStats(),"deduction-year":blankStats()});
+        setBlitzRoundStats(blankStats());
+        setBlitzBest({});
+        setBlitzBestNew({});
+        setSuddenBest({});
+        setSuddenBestNew({});
+        // History stacks
+        setStack([]);setForwardStack([]);
+        setDedStack(blankDedStacks());setDedForwardStack(blankDedStacks());
+        setSavedDedByType(blankDedTypeStore());
+        setBackDepth(0);setBrowseHasCredit(false);
+        // Live question state
+        setLocked(false);setRevealed(false);setCountedWrong(false);
+        setCanOverrideCorrect(false);setPendingWrongOverride(null);
+        setOverrideUsedThisQ(false);setTimerDone(false);
+        setCalcOpenByMode({});setCalcPenaltyActive(false);
+        setPersistBtns({});setFlash(null);
+        setDed(null);setDedFlash(null);setDedType("day");
+        setAbCrossOnly(false);setJulCrossOnly(false);setMonthOnly1582(false);
+        // Per-mode toggles
+        setSaveStats(true);setUseJulian(true);
+        setAllowMistakes(true);setPerQ(false);
+        setBlitzSec(60);setBlitzRemain(60);setBlitzRunning(false);
+        setQSec(5);setQRemain(5);
+        setActive(false);setShowTimerDate(false);
+        setFlashMs(500);setFlashPhase("dash");setFlashRemainMs(500);
+        setScoringOffByMode({});setTimingOffByMode({classic:true,deduction:true});
+        // Settings popover
+        setRandomFormat(true);setDateFormat('written-mdy');
+        setLeapChance('random');setJanFebChance('random');setJulianChance('random');
+        setMinY(1);setMaxY(10000);
+        setMinInputVal("1");setMaxInputVal("10000");
+        // Theme back to system-detection defaults
+        setUseSystem(true);setDarkTheme("dusk");setLightTheme("light");setManualTheme("dusk");
+        // Lookup
+        setLookupHistory([]);setLookupInput("");setLookupOutput("");
+        setLookupCalcDate(null);setLookupSelectedHistoryId(null);setLookupCalcOpen(false);
+        // Fresh dates for the casual modes (classic/blitz/flash). AoX/Deduction generate on
+        // entry. Range and format setters above force defaults for this generation.
+        setDateByMode(()=>{const mk=()=>{const d=randomDate(1,10000);d._fmt=rollFormat();d._jul=false;return d;};return{classic:mk(),blitz:mk(),flash:mk()};});
+        // Force AoxMode remount so its internal state (aoxN, runPhase, allowMistakes, oneByOne,
+        // bestRef, persistBtns, all the run-progress refs, etc.) resets to defaults. This is
+        // batched with the other setStates so the remount happens in the same render cycle.
+        setAoxResetKey(k=>k+1);
+        // 4. DOM bar refs — visual snap-back so the bars don't show a partially-drained state
+        //    until the next render writes them.
+        if(blitzBarRef.current)blitzBarRef.current.style.width="100%";
+        if(blitzTimeRef.current)blitzTimeRef.current.textContent=fmtBlitzT(60);
+        if(suddenBarRef.current)suddenBarRef.current.style.width="100%";
+        if(suddenTimeRef.current)suddenTimeRef.current.textContent="5s";
+        resetFlashBar();
+        // 5. Scroll the window AND the app scroll container to the top (matches
+        // initial launch state). The mode-change effect would handle the container
+        // reset asynchronously after setMode commits, but doing it synchronously here
+        // matches this section's "synchronous reset" promise and avoids any visual
+        // flash. window.scrollTo is defense-in-depth since body can't scroll anyway.
+        if(typeof window!=="undefined")window.scrollTo(0,0);
+        if(appScrollRef.current)appScrollRef.current.scrollTop=0;
+      };
+      // Two-tap-to-confirm wrapper. Tap 1 arms (label flips to "Confirm?", button gets a ring).
+      // Tap 2 within the arm window fires the reset and disarms. Auto-disarm via timer (3s),
+      // settings-close watcher, and any-other-popover-mousedown listener.
+      const armFullReset=()=>{
+        // Defense in depth — the pointer-events-none className keeps taps from reaching here,
+        // but if some keyboard/programmatic path bypasses CSS, this short-circuit ensures
+        // we never arm/fire when the action would be a no-op.
+        if(isFullyReset)return;
+        if(fullResetArmed){
+          if(fullResetTimerRef.current){clearTimeout(fullResetTimerRef.current);fullResetTimerRef.current=null;}
+          setFullResetArmed(false);
+          fullReset();
+          return;
+        }
+        setFullResetArmed(true);
+        if(fullResetTimerRef.current)clearTimeout(fullResetTimerRef.current);
+        fullResetTimerRef.current=setTimeout(()=>{setFullResetArmed(false);fullResetTimerRef.current=null;},3000);
+      };
+      const disarmFullReset=()=>{
+        if(fullResetTimerRef.current){clearTimeout(fullResetTimerRef.current);fullResetTimerRef.current=null;}
+        setFullResetArmed(false);
+      };
+      // Disarm whenever settings closes by any path (gear tap, click-outside, Esc, full-reset firing).
+      useEffect(()=>{if(!settingsOpen)disarmFullReset();},[settingsOpen]);
+      // Safety net: if state somehow flips to fully-reset while the button is armed (shouldn't
+      // be reachable in practice — fullReset disarms before firing — but defensive), disarm.
+      useEffect(()=>{if(isFullyReset&&fullResetArmed)disarmFullReset();},[isFullyReset,fullResetArmed]);
+      // Site-wide disarm listener (capture phase) — disarms when the user mousedowns/touches
+      // any element outside the Full Reset button itself. Capture phase fires before the
+      // target's own onClick, so the user's intent (e.g., toggling Random Format, switching
+      // modes, tapping a date answer) still proceeds normally; we just consume the pending
+      // arm. Scope is the entire document (not just the settings popover) so taps anywhere
+      // outside the button reliably disarm. (The bug #4 timing-arm listener below
+      // intentionally uses a different phase — see its comment for why.)
+      useEffect(()=>{
+        if(!fullResetArmed)return;
+        const h=e=>{
+          if(fullResetBtnRef.current&&fullResetBtnRef.current.contains(e.target))return;
+          disarmFullReset();
+        };
+        document.addEventListener('mousedown',h,true);
+        document.addEventListener('touchstart',h,true);
+        return()=>{document.removeEventListener('mousedown',h,true);document.removeEventListener('touchstart',h,true);};
+      },[fullResetArmed]);
+      // Bug #4: global listener for the timing-arm warning. Disarms on any tap outside
+      // the merged warning button (which carries timingArmBtnRef). Uses bubble-phase
+      // 'click' rather than the capture-phase mousedown/touchstart pattern used by Full
+      // Reset above. Reason: with capture-phase, the disarm state update was scheduling
+      // a React re-render of the StatPanel (merged-warning → 3 separate stat boxes)
+      // between touchstart and the synthetic click on touchend, and the target's onClick
+      // wasn't firing reliably as a result — outside taps disarmed but didn't perform
+      // their intended action (day-of-week buttons, Reset Stats, etc.). Bubble-phase
+      // click guarantees the target's onClick has already fired by the time this
+      // handler runs, so the user's intent always proceeds AND the countdown is
+      // canceled in the same tap — matching the Full Reset UX from the user's
+      // perspective. Full Reset stays on the capture-phase pattern because its arm
+      // lives inside the settings popover, where the DOM doesn't reshape on disarm
+      // and the timing concern doesn't apply.
+      //
+      // Listener registration is DEFERRED via setTimeout(0): the tap that just armed
+      // the warning bubbles up to document and would otherwise be caught by this very
+      // listener (which doesn't recognize the now-detached time-stat box as "inside the
+      // warning button"), instantly disarming what was just armed. Deferring registration
+      // to the next macrotask guarantees the arming click has finished propagating before
+      // the listener exists, so the arming tap can't disarm itself.
+      useEffect(()=>{
+        if(!timingArmed)return;
+        const h=e=>{
+          if(timingArmBtnRef.current&&timingArmBtnRef.current.contains(e.target))return;
+          disarmTimingArm();
+        };
+        const t=setTimeout(()=>document.addEventListener('click',h),0);
+        return()=>{clearTimeout(t);document.removeEventListener('click',h);};
+      },[timingArmed]);
+      // Bug #4: disarm the timing warning on mode change. Programmatic mode switches
+      // (e.g., Full Reset, or guide → Classic auto-redirect) need an explicit disarm
+      // since they don't go through the global tap listener.
+      useEffect(()=>{if(timingArmedRef.current)disarmTimingArm();},[mode]);
+      // Bug #5: also disarm if saveStats flips off while armed. The armed warning UI is
+      // gated on (timingArmed && saveStats), so the button visually disappears, but the
+      // state needs to follow.
+      useEffect(()=>{if(!saveStats&&timingArmedRef.current)disarmTimingArm();},[saveStats]);
+      // Cleanup the timers on unmount.
+      useEffect(()=>()=>{
+        if(fullResetTimerRef.current)clearTimeout(fullResetTimerRef.current);
+        if(timingArmTimerRef.current)clearTimeout(timingArmTimerRef.current);
+      },[]);
+      // True when every popover-controlled value matches its initial useState default.
+      // Drives Reset Settings dim-and-lock — same pattern as Reveal/Override/etc.
+      // Includes year range *input text* values so a dirty (uncommitted) input keeps
+      // the button active to clear it back to "1" / "10000".
+      const settingsAtDefaults=randomFormat===true&&dateFormat==='written-mdy'&&useJulian===true&&minY===1&&maxY===10000&&minInputVal==="1"&&maxInputVal==="10000"&&leapChance==='random'&&janFebChance==='random'&&julianChance==='random'&&saveStats===true&&useSystem===true&&darkTheme==='dusk'&&lightTheme==='light'&&manualTheme==='dusk';
+      // isFullyReset — true iff every user-perceivable piece of state equals its initial
+      // launch value, meaning tapping Full Reset would be a no-op. Used to dim+lock the Full
+      // Reset button (opacity-60 pointer-events-none) since acting on it would have no effect.
+      //
+      // WHAT'S CHECKED
+      //   - mode (must be 'classic' — fullReset always sets mode='classic', so any other mode
+      //     is by definition non-fresh)
+      //   - All settings popover values (reuses settingsAtDefaults above)
+      //   - All per-mode toggles: allowMistakes, perQ, blitzSec, qSec, flashMs,
+      //     Deduction-mode toggles (abCrossOnly, julCrossOnly, monthOnly1582), dedType
+      //   - Hide states: scoringOffByMode={}, timingOffByMode={classic:true,deduction:true}
+      //   - Stats: every entry in statsByMode + blitzRoundStats matches blank
+      //   - All-time bests: blitzBest, blitzBestNew, suddenBest, suddenBestNew all {}
+      //   - History: stack, forwardStack, dedStack, dedForwardStack, savedDedByType,
+      //     backDepth, browseHasCredit
+      //   - Live question state: locked, revealed, countedWrong, canOverrideCorrect,
+      //     pendingWrongOverride, overrideUsedThisQ, timerDone, calcPenaltyActive,
+      //     calcOpenByMode, persistBtns, flash, ded, dedFlash
+      //   - Timer states: blitzRunning, active, showTimerDate, blitzRemain, qRemain,
+      //     flashRemainMs, flashPhase
+      //   - Lookup: lookupHistory, lookupInput, lookupOutput, lookupCalcDate,
+      //     lookupSelectedHistoryId, lookupCalcOpen
+      //   - AoX freshness via aoxIsFresh (reported up by AoxMode's onFreshChange callback)
+      //
+      // WHAT'S EXCLUDED AND WHY
+      //   - mode and settingsOpen are preconditions, not dirty signals (you're looking at
+      //     the button from inside the settings popover, so settingsOpen=true; classic is
+      //     the post-reset mode)
+      //   - appAtBottom and appScrolledFromTop are auto-reset whenever mode changes
+      //     (the mode-change effect on appScrollRef sets scrollTop=0; the ResizeObserver
+      //     in the scroll-state effect then re-evaluates and clears both to defaults).
+      //     ** SCROLL-COUPLING NOTE: if container leave behavior is ever changed so these
+      //     are NO LONGER auto-reset on mode change, they MUST be added to this check
+      //     or the button could appear dim while scroll state isn't actually default. **
+      //   - dateByMode entries (always random; reset just rerolls; user has no relationship
+      //     with the specific date value)
+      //   - aoxFrozenDate (derived from date)
+      //   - aoxResetKey (an internal remount trigger, not user-controllable state)
+      //   - All refs that track navigation side-effects (preservedByModeRef, stacksByModeRef,
+      //     prevModeRef, prevPopRef, prevDedTogglesRef, timer refs, snapshot refs, display
+      //     caches). These aren't directly user-controllable — visiting a mode and returning
+      //     populates them passively. Including them would mean "I haven't done anything but
+      //     the button is bright" the moment a user tabs between modes. The state values they
+      //     mirror ARE checked, so any actual user-visible change is caught.
+      //   - ded / dedFlash (the live Deduction puzzle + its flash card). These are
+      //     working state retained for flicker-free return to Deduction, NOT
+      //     user-perceivable progress, so they are intentionally not required to be
+      //     null here. Real Deduction progress is covered by savedDedByType (puzzle
+      //     freshness) and dedStack (answered rounds), both of which ARE checked.
+      //     (Earlier this required ded===null, which kept Full Reset bright after
+      //     merely visiting Deduction once — that was the bug this exclusion fixes.)
+      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh;
+      // Settings popover. Stays IN the bar (absolute, anchored to the bar's relative
+      // inner div via top-full) — only its CustomSelect dropdown PANELS portal out to
+      // #root, to escape this overflow scroll context for the frosted-glass blur. Do NOT
+      // re-portal the whole popover: that was tried (on a wrong "the fixed bar breaks the
+      // frost" theory) and reverted — the scroll container, not the bar, was the cause.
+      const settingsJsx=settingsOpen&&(<div ref={settingsPopoverRef} className="absolute left-4 right-4 top-full mt-2 z-50 rounded-2xl card py-4 space-y-4 shadow-xl flex flex-col max-h-[calc(100dvh-80px)]">
+        <div ref={popoverInnerScrollRef} className={`overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-4 px-4${popoverScrolledFromTop&&!popoverAtBottom?" fade-scroll-both":popoverScrolledFromTop?" fade-scroll-top":!popoverAtBottom?" fade-scroll-bottom":""}`}>
+        <div className="space-y-2">
+          <SectionLabel>Date Format</SectionLabel>
+          <div className="flex items-center justify-between"><span className="text-xs text-purple-200/80">Random Format</span><button type="button" onClick={()=>setRandomFormat(v=>!v)} className={`px-3 py-1 rounded-xl text-xs font-medium border ${randomFormat?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{randomFormat?"On":"Off"}</button></div>
+          <div className={`flex gap-2 ${randomFormat?"opacity-60 pointer-events-none":""}`}>
+            <div className="flex-1 space-y-1.5">
+              <SectionLabel className="text-center">Written</SectionLabel>
+              <div className="flex border surface-toggle rounded-xl overflow-hidden">
+                <button type="button" onClick={()=>setDateFormat('written-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='written-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
+                <button type="button" onClick={()=>setDateFormat('written-dmy')} className={`flex-1 px-2 py-1 text-xs font-medium ${dateFormat==='written-dmy'?"btn-solid text-white":"text-purple-100/80"}`}>DMY</button>
+              </div>
+            </div>
+            <div className="flex-1 space-y-1.5">
+              <SectionLabel className="text-center">Numeric</SectionLabel>
+              <div className="flex border surface-toggle rounded-xl overflow-hidden">
+                <button type="button" onClick={()=>setDateFormat('numeric-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='numeric-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
+                <button type="button" onClick={()=>setDateFormat('numeric-dmy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='numeric-dmy'?"btn-solid text-white":"text-purple-100/80"}`}>DMY</button>
+                <button type="button" onClick={()=>setDateFormat('numeric-ymd')} className={`flex-1 px-2 py-1 text-xs font-medium ${dateFormat==='numeric-ymd'?"btn-solid text-white":"text-purple-100/80"}`}>YMD</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="space-y-2 pt-3 border-t border-purple-500/20">
+          <SectionLabel>Calendar System</SectionLabel>
+          <div className="flex items-center justify-between"><span className="text-xs text-purple-200/80">Julian Calendar (pre-Oct 15, 1582)</span><button type="button" onClick={()=>setUseJulian(v=>!v)} className={`px-3 py-1 rounded-xl text-xs font-medium border ${useJulian?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{useJulian?"On":"Off"}</button></div>
+          {/* Julian Chance row: locked when useJulian is off (no Julian dates possible) OR when
+              the year range is entirely Gregorian (minY>=1583) or entirely Julian (maxY<=1581).
+              Year 1582 itself contains BOTH Julian (Jan-Sep + Oct 1-4) and Gregorian (Oct 15+ + Nov + Dec)
+              dates, so a range that includes year 1582 always counts as mixed and the row stays
+              unlocked. When locked, the selected value stays visually selected so it's restored
+              when the lock condition clears (matches Leap Year Chance locking behavior). */}
+          <div className="flex gap-1.5">
+            {(() => { const julianMixed=useJulian&&minY<=1582&&maxY>=1582; return ['random','25','50','75','100'].map(v=>(<button key={v} type="button" onClick={()=>{if(!julianMixed)return;setJulianChance(v);}} aria-disabled={!julianMixed} className={`flex-1 px-1.5 py-1.5 rounded-xl text-xs font-medium border ${julianChance===v?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${!julianMixed?" opacity-60 pointer-events-none":""}`}>{v==='random'?'Random':v+'%'}</button>)); })()}
+          </div>
+        </div>
+        <div className="space-y-2 pt-3 border-t border-purple-500/20">
+          <SectionLabel>Year Range</SectionLabel>
+          <div className="flex items-center gap-2">
+            <input ref={minInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={minInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMinInputVal(e.target.value);}} onBlur={commitMin} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMin();e.currentTarget.blur();}if(e.key==="Escape"){setMinInputVal(String(minY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-none focus-ring tabular-nums"/>
+            <span className="text-purple-300/60 text-sm shrink-0">→</span>
+            <input ref={maxInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={maxInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMaxInputVal(e.target.value);}} onBlur={commitMax} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMax();e.currentTarget.blur();}if(e.key==="Escape"){setMaxInputVal(String(maxY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-none focus-ring tabular-nums"/>
+          </div>
+        </div>
+        <div className="space-y-2 pt-3 border-t border-purple-500/20">
+          <SectionLabel>Leap Year</SectionLabel>
+          {/* Umbrella "Leap Year" SectionLabel covers both chance rows below. Each row
+              keeps its own descriptive sub-label (muted text-purple-200/80, NOT the
+              uppercase tracking-widest SectionLabel style) so the hierarchy reads
+              top-down: section heading → sub-label → buttons. The two rows live in
+              one divider-bounded section because they're tightly related — both
+              control leap-year date generation behavior. */}
+          <div className="text-xs text-purple-200/80">Leap Year Chance</div>
+          <div className="flex gap-1.5">
+            {/* When the active year range contains no leap years (per active calendar), lock the four
+                buttons. The currently-selected value stays visually selected so it's restored when the
+                range changes back to one with a leap year. Jan/Feb Chance stays unlocked — that row
+                doesn't imply leap-year reachability (a setting kept while unreachable just doesn't fire). */}
+            {(() => { const leapReachable=rangeHasLeapYear(minY,maxY,useJulian); return ['random','50','75','100'].map(v=>(<button key={v} type="button" onClick={()=>{if(!leapReachable)return;setLeapChance(v);}} aria-disabled={!leapReachable} className={`flex-1 px-1.5 py-1.5 rounded-xl text-xs font-medium border ${leapChance===v?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${!leapReachable?" opacity-60 pointer-events-none":""}`}>{v==='random'?'Random':v+'%'}</button>)); })()}
+          </div>
+          <div className="text-xs text-purple-200/80">Jan/Feb Chance on Leap Years</div>
+          {/* Jan/Feb Chance: 5-button chance row. Option A semantics — the listed % is the
+              exact final probability that a leap-year date lands on Jan/Feb. Random means
+              no biasing (natural ~17% on uniform months). The row stays unlocked even when
+              leap years aren't reachable in the current range — the setting is preserved
+              and applies once a leap year becomes reachable again. px-1.5 (slightly tighter
+              than the default px-2) so 5 buttons with "Random" label fit cleanly on iPhone
+              SE width at text-xs without wrapping. Leap Year Chance above uses the same
+              padding for visual consistency. */}
+          <div className="flex gap-1.5">
+            {['random','25','50','75','100'].map(v=>(<button key={v} type="button" onClick={()=>setJanFebChance(v)} className={`flex-1 px-1.5 py-1.5 rounded-xl text-xs font-medium border ${janFebChance===v?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{v==='random'?'Random':v+'%'}</button>))}
+          </div>
+        </div>
+        <div className="space-y-2 pt-3 border-t border-purple-500/20">
+          <SectionLabel>Stats</SectionLabel>
+          <div className="flex items-center justify-between"><span className="text-xs text-purple-200/80">Save Stats</span><button type="button" onClick={toggleSaveStats} className={`px-3 py-1 rounded-xl text-xs font-medium border ${saveStats?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{saveStats?"On":"Off"}</button></div>
+        </div>
+        <div className="space-y-2 pt-3 border-t border-purple-500/20">
+          <SectionLabel>Theme</SectionLabel>
+          <div className="flex items-center justify-between"><span className="text-xs text-purple-200/80">Use System Settings</span><button type="button" onClick={()=>setUseSystem(v=>!v)} className={`px-3 py-1 rounded-xl text-xs font-medium border ${useSystem?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{useSystem?"On":"Off"}</button></div>
+          {useSystem?(<><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Dark:</span><CustomSelect value={darkTheme} onChange={setDarkTheme} options={DARK_THEMES} openUp ariaLabel="Dark theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Light:</span><CustomSelect value={lightTheme} onChange={setLightTheme} options={LIGHT_THEMES} openUp ariaLabel="Light theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div></>):(<div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Theme:</span><CustomSelect value={manualTheme} onChange={setManualTheme} options={ALL_THEMES_LABELED} openUp ariaLabel="Theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div>)}
+        </div>
+        </div>
+        <div className={`popover-sticky-footer pt-4 px-4 border-t border-purple-500/20${!popoverAtBottom?" elev-shadow-up":""}`}>
+          <div className="flex gap-2">
+            <button type="button" onClick={resetSettings} className={`flex-1 ${RESET_BTN_CLASS} ${settingsAtDefaults?"opacity-60 pointer-events-none":""}`}>Reset Settings</button>
+            <button ref={fullResetBtnRef} type="button" onClick={armFullReset} className={`flex-1 ${RESET_BTN_CLASS}${fullResetArmed?" ring-2 ring-rose-200":""}${isFullyReset?" opacity-60 pointer-events-none":""}`}>{fullResetArmed?"Confirm?":"Full Reset"}</button>
+          </div>
+        </div>
+        <div className="pt-3 px-4 border-t border-purple-500/20 text-[11px] text-purple-300/60 space-y-0.5">
+          <div>Contact: <a href="mailto:dayoftheweekcalculation@gmail.com" className="underline break-all select-text">dayoftheweekcalculation@gmail.com</a></div>
+          <div>Last Updated: {(()=>{const d=DEPLOY_TS;const yy=d.getFullYear();const mo=d.getMonth()+1;const da=d.getDate();const numFmt=numericFormatOf(dateFormat);const datePart=fmt(yy,mo,da,numFmt);const timePart=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});return`${datePart} ${timePart}`;})()}</div>
+        </div>
+      </div>);
+      return(
+        <>
+        {/* Bar (position:fixed): the bar is a CHROME-STYLE fixed element above
+            everything — explicitly positioned at the viewport top so iOS PWA recognizes
+            it as chrome UI and live-samples its bg-[var(--bg1)] (theme-aware) for the
+            status bar color. Sibling appScrollRef container is position:absolute
+            below, with padding-top:var(--bar-h) so its content starts below the bar.
+            ResizeObserver elsewhere in App writes the bar's offsetHeight to --bar-h.
+            Full width (no max-w) so theme bg + elevation shadow span edge-to-edge on
+            screens wider than 480px; inner max-w-[480px] wrapper holds the title row.
+            elev-shadow-down appears when the scroll container is past top.
+            HtP-only bar pb-2.5: absorbs half (10px) of the 20px gap that normally sits
+            between the title row and the first GuidePage panel. The <GuidePage/> wrapper
+            also drops mt-5 → mt-2.5 to compensate, so the total gap stays 20px — but the
+            visual "lock line" is centered between title row and first panel rather than
+            sitting right at the title row's bottom edge. */}
+        <div ref={htpStickyBarRef} style={{position:'fixed',top:0,left:0,right:0,zIndex:30}} className={`htp-sticky-bar bg-[var(--bg1)] w-full pt-5${mode==="guide"?" pb-2.5":""}${appScrolledFromTop?" elev-shadow-down":""}`}>
+          <div className="mx-auto px-4 w-full max-w-[480px] relative">
+            <div className="flex items-center justify-between gap-2">
+              {/* header left: title */}
+              <h1 className="text-xl font-semibold leading-none shrink-0">Calendar Game</h1>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* gear settings button */}
+                <div className="relative" ref={settingsRef}>
+                  <button type="button" onClick={()=>setSettingsOpen(v=>!v)} className={`px-2.5 py-2 rounded-xl text-sm border ${settingsOpen?"btn-solid border-transparent":"surface-button text-purple-100/80"}`} aria-label="Settings">⚙</button>
+                </div>
+                {/* mode selector */}
+                {/* Mode CustomSelect. Replaced the original native <select> as part of the
+                    site-wide CustomSelect rollout that fixed iOS Safari's native picker
+                    auto-close bug — see the CustomSelect component for full context.
+                    wrapperRef={modeSelectRef} so the existing settings click-outside handler
+                    keeps treating taps inside the mode dropdown the same way it treated taps
+                    on the original <select>. showChevron renders the same ▲▼ indicator. */}
+                <CustomSelect wrapperRef={modeSelectRef} value={mode} onChange={(v)=>{setMode(v);setSettingsOpen(false);}} options={MODE_LABELS} ariaLabel="Mode" showChevron className="panel rounded-xl px-2.5 py-2 pr-9 text-sm focus:outline-none focus-ring text-left"/>
+              </div>
+            </div>
+            {settingsJsx}
+          </div>
+        </div>
+        {/* Scroll container: position:absolute inset:0 with padding-top:var(--bar-h)
+            so content starts immediately below the bar. overscroll-contain keeps
+            rubber-band bounce LOCAL to this container (bar is unaffected). */}
+        <div ref={appScrollRef} style={{paddingTop:'var(--bar-h)'}} className={`absolute inset-0 overflow-y-auto overscroll-contain${appScrolledFromTop&&!appAtBottom?" fade-scroll-both":appScrolledFromTop?" fade-scroll-top":!appAtBottom?" fade-scroll-bottom":""}`}>
+        <div className="mx-auto px-4 pb-5 w-full max-w-[480px]">
+          {showStats&&(<>
+            {/* Bug #5 (Save Stats off pauses all stats site-wide): when saveStats is false,
+                every stat's `off` becomes true (showing "—" with strikethrough label) and
+                every stat's `fn` is nulled (boxes render as <div>, not <button>, so taps do
+                nothing). The opacity-50 wrapper provides additional dim reinforcement.
+                armedSpan is also gated on saveStats so the warning UI can't appear while
+                save is off (defense in depth — toggleTimingOff also won't arm in this state). */}
+            <div className={saveStats?"":"opacity-50"}>{(()=>{
+              const showStreak=!(mode==="blitz"&&perQ);
+              const sOff=effectiveScoringOff||!saveStats;
+              const tOff=effectiveTimingOff||!saveStats;
+              const sFn=saveStats&&canHideStats?toggleScoringOff:null;
+              const tFn=saveStats&&canHideStats?toggleTimingOff:null;
+              const statsArr=[
+                {label:"Score",value:(mode==="blitz"&&!perQ)?`${blitzRoundStats.good}/${blitzRoundStats.played}`:`${S.good}/${S.played}`,off:sOff,fn:sFn},
+                {label:"Accuracy",value:fmtAccuracyPct(S.good,S.played),off:sOff,fn:sFn},
+                ...(showStreak?[{label:"Streak",value:`${S.streak}/${S.best}`,off:sOff,fn:sFn}]:[]),
+                {label:"Last",value:truncTime(sLast),off:tOff,fn:tFn},
+                {label:"Average",value:fmtTime(sAvg),off:tOff,fn:tFn},
+                {label:"Median",value:fmtTime(sMed),off:tOff,fn:tFn},
+              ];
+              // Bug #4: when timingArmed AND saveStats, merge the 3 time stat boxes into one
+              // wide warning button. Start index of time stats: 3 when Streak is present,
+              // 2 when not (Blitz perQ).
+              const timeStart=showStreak?3:2;
+              const armedSpan=(timingArmed&&saveStats)?{
+                startIdx:timeStart,
+                endIdx:timeStart+2,
+                label:"Enable and Reset Stats?",
+                onClick:toggleTimingOff,
+                btnRef:timingArmBtnRef,
+              }:null;
+              return<StatPanel stats={statsArr} armedSpan={armedSpan}/>;
+            })()}</div>
+            {["classic","deduction","flash"].includes(mode)&&(<div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={handleResetStats}>Reset Stats</button></div>)}
+            {mode==='blitz'&&!perQ&&(()=>{const bk=getBlitzBk();const newF=blitzBestNew[bk]||{score:false,streak:false};const b=blitzBest[bk];const showTag=b&&b.scoreRoundId!=null&&b.streakRoundId!=null;return(<div className="mt-3 text-xs text-purple-300/60"><div className="flex flex-wrap items-start gap-4"><div className="min-w-[125px]">Best Score: {b?.score??'—'}{newF.score&&<NewBestStar/>}</div><div className="min-w-[125px]">Best Streak: {b?.streak??'—'}{newF.streak&&<NewBestStar/>}</div>{showTag&&<span className="shrink-0 ml-auto">{b.scoreRoundId===b.streakRoundId?"Same Round":"Different Rounds"}</span>}</div></div>);})()}
+            {mode==='blitz'&&perQ&&(()=>{const sk=getSuddenBk();return(<div className="mt-3 text-xs text-purple-300/60"><div className="flex flex-wrap items-start gap-4"><div className="min-w-[125px]">Best Score: {suddenBest[sk]?.score??'—'}{suddenBestNew[sk]&&<NewBestStar/>}</div></div></div>);})()}
+            {mode==='blitz'&&(<>
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={toggleAllowMistakesBtn} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${(active||timerDone)?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
+                <button type="button" onClick={togglePerQBtn} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border btn-solid border-transparent${(active||timerDone)?" opacity-60 pointer-events-none":""}`}>{perQ?"Per Question":"Per Round"}</button>
+              </div>
+              <div className="mt-3">{timerSettingControl}</div>
+            </>)}
+            {mode==='flash'&&(<div className="mt-3">{timerSettingControl}</div>)}
+          </>)}
+          {/* key={aoxResetKey} forces remount on Full Reset since AoxMode is always-mounted
+              (display:none toggle on visible prop, not conditional rendering) and its internal
+              state would otherwise persist across resets. See aoxResetKey declaration upstream
+              for full rationale. */}
+          <AoxMode key={aoxResetKey} minY={minY} maxY={maxY} visible={mode==="aox"} fmtDate={fmtDate} useJulian={useJulian} genDate={genDate} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} randomFormat={randomFormat} dateFormat={dateFormat} saveStats={saveStats} onFreshChange={setAoxIsFresh}/>
+          {mode==="lookup"&&(<div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div>)}
+          {mode==="guide"&&(<div className="mt-2.5"><GuidePage/></div>)}
+          {["classic","blitz","flash"].includes(mode)&&(
+            <div className="mt-5">
+              {mode==="blitz"&&!perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={blitzTimeRef}>{fmtBlitzT(blitzSec)}</span></div><div className="bar"><span ref={blitzBarRef} style={{width:"100%"}}></span></div></div>)}
+              {mode==="blitz"&&perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={suddenTimeRef}>{qSec}s</span></div><div className="bar"><span ref={suddenBarRef} style={{width:"100%"}}></span></div></div>)}
+              {mode==="flash"&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1">{fmtFlashT(flashRemainMs)}</div><div className="bar"><span ref={flashBarRef} style={{width:"100%"}}></span></div></div>)}
+              <div className="mt-4 rounded-2xl panel p-4">
+                <div className="text-center relative">
+                  {backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{stack.length+1}</span>}
+                  <div className="text-3xl font-bold">{shouldShowTimerDate?((mode==="flash"&&active&&flashPhase==="hide")?"…":fmtDate(date.y,date.m,date.d,date._fmt)):"—"}</div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
+                  {DAY.map((n,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={n} type="button" onClick={()=>{if(perLocked)return;submitDoW(i);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{n}</button>);})}
+                </div>
+              </div>
+              <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+                <div className="grid grid-cols-4 gap-2">
+                  {isTimer(mode)?(active?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={arm}>Reset</button>):timerDone?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={arm}>Reset</button>):(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={begin}>Begin</button>)):(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>doNew()}>New</button>)}
+                  <div className="col-span-1 flex gap-1">
+                    <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||stack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={goBack}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                    <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||forwardStack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={goForward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                  </div>
+                  <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={reveal}>Reveal</button>
+                  <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={override}>Override</button>
+                </div>
+                <MethodBreakdownSection key={mode} date={calcTarget} open={calcOpen} onOpenChange={handleCalcOpenChange} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={backDepth>0?(calcTarget?._jul??useJulian):useJulian} displayedFormat={calcTarget?._fmt||dateFormat}/>
+              </div>
+            </div>
+          )}
+          {mode==="deduction"&&(
+            <div className="mt-5">
+              {/* 3-zone grid keeps Day/Month/Year buttons fixed in the center regardless of which
+                  toggles are active. Side zones (1fr each) flex to fill remaining space; toggles
+                  push to the OUTER edges via justify-start (left zone) and justify-end (right zone),
+                  leaving visible space between each toggle and the centered Day/Month/Year cluster.
+                  Toggle styling matches Blitz/AoX Allow Mistakes / One-By-One / Per Round buttons
+                  exactly (px-2 py-1 rounded-xl text-xs font-medium border) — minus flex-1, since
+                  these buttons size to content + min-width rather than stretching to fill.
+                  ab Cross, Jul Cross, and 1582 Only all share min-w-[5rem] so all toggles
+                  are matched-width regardless of their label length.
+                  Day/Month/Year share min-w-[4rem] so all three are the same width as each
+                  other (sized to "Month" the widest of the three with px-2 padding). They use
+                  surface-toggle (theme-adaptive border) like the toggles instead of a hard-coded
+                  purple border. */}
+              <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
+                <div className="flex justify-start">
+                  {dedType==="year"&&(()=>{
+                    // ab Cross disabled when year range doesn't span any 100-year boundary
+                    const abPossible=Math.floor(Math.max(1,minY)/100)!==Math.floor(maxY/100);
+                    const disabled=!abPossible;
+                    const active=abCrossOnly&&!disabled;
+                    return(<button type="button" onClick={()=>{if(disabled)return;setAbCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}><i>ab</i> Cross</button>);
+                  })()}
+                </div>
+                <div className="flex gap-2 items-center">
+                  {["day","month","year"].map(t=>{
+                    // Year sub-type button auto-disables when range can't support a buildable
+                    // puzzle (yearSubPossible). Day and Month always available.
+                    const disabled=t==="year"&&!yearSubPossible;
+                    return(<button key={t} type="button" onClick={()=>{if(disabled)return;changeDedType(t);}} className={`px-2 py-1.5 rounded-xl text-sm font-medium border min-w-[4rem] ${dedType===t?"btn-solid border-transparent text-white":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>{t[0].toUpperCase()+t.slice(1)}</button>);
+                  })}
+                </div>
+                <div className="flex justify-end">
+                  {dedType==="year"&&(()=>{
+                    // Jul Cross disabled when useJulian off, or range doesn't contain at least one
+                    // boundary pair ({1582, 1583} for Jan-Sep + Oct1-4, OR {1581, 1582} for Oct15+
+                    // + Nov + Dec). Range must contain 1582 plus at least one of its neighbors.
+                    const has1581=1581>=minY&&1581<=maxY,has1582=1582>=minY&&1582<=maxY,has1583=1583>=minY&&1583<=maxY;
+                    const julPossible=useJulian&&has1582&&(has1581||has1583);
+                    const disabled=!julPossible;
+                    const active=julCrossOnly&&!disabled;
+                    return(<button type="button" onClick={()=>{if(disabled)return;setJulCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>Jul Cross</button>);
+                  })()}
+                  {dedType==="month"&&(()=>{
+                    // 1582 Only disabled when useJulian off or year range excludes 1582.
+                    const possible=useJulian&&1582>=minY&&1582<=maxY;
+                    const disabled=!possible;
+                    const active=monthOnly1582&&!disabled;
+                    return(<button type="button" onClick={()=>{if(disabled)return;setMonthOnly1582(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>1582 Only</button>);
+                  })()}
+                </div>
+              </div>
+              <div className="mt-4 rounded-2xl panel p-4">
+                <div className="text-center relative">
+                  {backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{(dedStack[dedType]||[]).length+1}</span>}
+                  <div className="text-3xl font-bold">{ded?fmtDatePartial(ded.y,ded.m,ded.d,ded._fmt,ded.type):"—"}</div>
+                  {ded&&<div className="mt-1 text-lg text-purple-100">Weekday: <span className="font-semibold">{DAY[ded.w]}</span></div>}
+                </div>
+                <div className="mt-4">
+                  {/* Year mode grid layouts:
+                        N=2 (Jul Cross) → grid-cols-2: symmetric side-by-side, each takes half row.
+                        N=5 (default)    → grid-cols-6: top row 3 buttons (each col-span-2 = 1/3 width),
+                                           bottom row 2 buttons (each col-span-3 = 1/2 width centered).
+                        Other lengths (defensive fallback) → grid-cols-3 with no col-span. */}
+                  {ded&&ded.type==="year"&&(()=>{const N=ded.options.length;const gridCls=N===2?"grid-cols-2":N===5?"grid-cols-6":"grid-cols-3";const colSpanFor=idx=>N===5?(idx<3?"col-span-2":"col-span-3"):"";return(<div className={`grid gap-2 ${gridCls}`} data-answer-grid="true">{ded.options.map((y,idx)=>{const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="year"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(y,idx)} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${colSpanFor(idx)}`}>{fmtYear(y)}</button>);})}</div>);})()}
+                  {ded&&ded.type==="month"&&(<div className="grid grid-cols-2 gap-3" data-answer-grid="true">{ded.options.map((mv,idx)=>{const last=idx===ded.options.length-1?"col-span-2":"";const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="month"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(mv,idx)} className={`${baseBtn} ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{mv}</button>);})}</div>)}
+                  {ded&&ded.type==="day"&&(<div className="grid grid-cols-3 gap-2" data-answer-grid="true">{ded.options.map((dv,idx)=>{const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="day"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(dv,idx)} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${centerLastOpt(idx,ded.options.length)}`}>{dv}</button>);})}</div>)}
+                </div>
+              </div>
+              <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+                <div className="grid grid-cols-4 gap-2">
+                  <button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>runDeductionRound()}>New</button>
+                  <div className="col-span-1 flex gap-1">
+                    <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(dedStack[dedType]||[]).length===0?"opacity-60 pointer-events-none":""}`} onClick={goBack}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                    <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(dedForwardStack[dedType]||[]).length===0?"opacity-60 pointer-events-none":""}`} onClick={goForward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                  </div>
+                  <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={reveal}>Reveal</button>
+                  <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={override}>Override</button>
+                </div>
+                {(()=>{
+                  // Build cellDates for Deduction Month sub-mode 1582 only, when the
+                  // answer cell groups months from both calendars. Each entry is a
+                  // {y,m,d} interpretation that MethodExplanation will use for dual codes.
+                  let cellDates=null;
+                  if(ded&&ded.type==='month'&&ded.y===1582&&ded.boxes){
+                    const ci=getDedCorrectIdx();
+                    const box=ci>=0?ded.boxes[ci]:null;
+                    if(box&&Array.isArray(box.months)&&box.months.length>=2){
+                      cellDates=box.months.map(m=>({y:ded.y,m,d:ded.d}));
+                    }
+                  }
+                  return(<MethodBreakdownSection date={calcTarget} open={calcOpen} onOpenChange={handleCalcOpenChange} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={calcTarget?._jul??useJulian} displayedFormat={calcTarget?._fmt||dateFormat} cellDates={cellDates}/>);
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
+        </div>
+        </>
+      );
+    }
+
+    function GuideSection({id,title,children,openId,onToggle}){
+      const isOpen=openId===id;
+      return(<div className="rounded-2xl panel overflow-hidden"><button type="button" onClick={()=>onToggle(id)} className="w-full text-left px-4 py-3 flex items-center justify-between"><span className="text-sm font-semibold text-purple-50">{title}</span><span className={`text-[7px] text-white/90 leading-none transition-transform ease-in-out ${isOpen?"rotate-180":""}`} style={{transitionDuration:"250ms"}}>▼</span></button><Expander open={isOpen}><div className="px-4 pb-4 pt-1 text-[13px] text-purple-100/90 leading-relaxed space-y-2">{children}</div></Expander></div>);
+    }
+    function GuidePage(){
+      const [open,setOpen]=useState(null);
+      const toggle=useCallback(id=>setOpen(o=>o===id?null:id),[]);
+      const Divider=({label})=>(<div className="flex items-center gap-2 px-1 pt-1"><div className="flex-1 h-px bg-purple-500/20"></div><span className="text-[10px] uppercase tracking-widest text-purple-300/60">{label}</span><div className="flex-1 h-px bg-purple-500/20"></div></div>);
+      return(
+        <div className="space-y-2">
+          <GuideSection id="overview" title="What Is Calendar Game?" openId={open} onToggle={toggle}><p>Calendar Game is a training tool for mental calculation of the day of the week. You're given a date and must identify which weekday it falls on — as quickly and accurately as possible. Dates use the proleptic Gregorian calendar by default. The Julian calendar is supported as an opt-in setting for dates on or before October 4, 1582 (the day before the Gregorian reform took effect).</p><p className="mt-2">It pairs with the book <i>Day-of-the-Week Calculation: A Highly Optimized Mental Method</i>.</p><p className="mt-2">If you have any questions, ideas, or recommendations, or have noticed any bugs or mistakes — whether about the site or the book — please feel free to reach out: <a href="mailto:dayoftheweekcalculation@gmail.com" className="underline break-all">dayoftheweekcalculation@gmail.com</a>.</p></GuideSection>
+          <Divider label="Interface"/>
+          <GuideSection id="buttons" title="Buttons" openId={open} onToggle={toggle}>
+            <p><b>New</b> — load a fresh date. In timer modes, only available after pressing Begin.</p>
+            <p><b>Begin</b> — timer modes only (Blitz, Flash, AoX). Starts a round or run. After pressing Begin, the timer starts and the date is shown (Flash hides it after the configured duration; AoX hides it between solves only when One-By-One is on).</p>
+            <p><b>Reset</b> — timer modes only. In Blitz, ends the current round and unlocks settings; saved bests for the round are preserved. In AoX, ends the current run; saved bests are preserved. Press Reset and then Begin to start a fresh round/run.</p>
+            <p><b>Reset Stats</b> — casual modes only (Classic, Flash, Deduction). Clears your stats and question history for the current mode (Deduction only resets the current sub-type's stats). Generates a new date when timing stats are visible, or when you've burned the current date (answered wrong, revealed, or shown codes); otherwise the current date is kept. In Flash, mid-question Reset Stats always generates a new date and returns to the dash state. Does not affect timer-mode bests.</p>
+            <p><b>Back (&lt;)</b> — return to the previous date. The answer is shown and the card is locked. No stat penalty. You can go back through your entire history in Classic, Flash, and Deduction; in Blitz and AoX, you can browse the current round or run. Every entry in your history shows the correct answer in green; if you got it wrong, your wrong guess(es) appear as dimmed red alongside the green. While browsing back, a small <b>Q#</b> label appears at the top-right of the date card showing your position in history (e.g. Q3 means you're on the third question viewed).</p>
+            <p><b>Forward (&gt;)</b> — move forward through dates you've browsed past with Back. The forward history clears whenever you answer a new question, press New/Begin/Reset, or take any action that advances the date. Overriding while browsing back does not clear the forward history. Each entry remembers its date format and calendar system, so a back-then-forward round trip never alters how a date was originally shown.</p>
+            <p><b>Reveal</b> — show the correct answer without guessing. Counts as a wrong attempt. No penalty on unanswered dates while browsing back.</p>
+            <p><b>Override</b> — fix a mistake. You can override any date in your history by browsing to it with Back/Forward. After a wrong answer: gives you credit with time recorded and adjusts your score. After a correct answer: undoes the credit and adjusts your score. You can also override the most recent past date directly from a fresh, untouched live question (in any mode) — Override is enabled when the live date hasn't been answered yet, and tapping it flips your previous date's right/wrong status. A previously correct date that's been retroactively flipped to wrong shows up with a green-and-red diagonal split: green-upper-left (originally correct) and red-lower-right (now counted wrong). You can only override each date once. Overriding a wrong answer (regardless of how) clears any wrong highlights; only the correct answer is shown. In Blitz, you can override past dates after the round ends to adjust your score and saved bests. In AoX without Allow Mistakes, overriding a correct answer ends the run. Override is locked when Save Stats is off.</p>
+            <p><b>Show Codes</b> — reveals the calculation codes for the current date. Counts as wrong if you haven't already answered incorrectly. No penalty on unanswered dates while browsing back. In AoX without Allow Mistakes, opening Show Codes ends the run.</p>
+          </GuideSection>
+          <GuideSection id="stats" title="Stats" openId={open} onToggle={toggle}>
+            <p><b>Score</b> — correct first-try answers out of total attempts. In Blitz, only the current round is shown. In AoX, shows correct answers out of total attempts; the run ends once correct answers reach the set number.</p>
+            <p><b>Accuracy</b> — percentage of questions answered correctly on the first try. Shows — until your first attempt.</p>
+            <p><b>Streak</b> — your current consecutive correct streak / your best in this session.</p>
+            <p><b>Last / Avg / Med</b> — timing stats, calculated using correct answers only. Last is your most recent correct time; Avg is the average across all correct answers; Med is the median, which is less skewed by outliers. Any time of 60 seconds or more — whether an individual solve, a computed average or median, or any Best — displays as "—". Times are still tracked internally and contribute to averages, medians, and best-tracking; only the display is capped.</p>
+            <p>Time formatting follows the WCA speedcubing convention: individual single times (Last) are <i>truncated</i> to hundredths — the third decimal is dropped, never rounded. Averages, medians, and bests are <i>rounded</i> to the nearest hundredth. Truncating singles prevents fortunate rounding boundaries on individual attempts; rounding aggregates avoids systematic downward bias.</p>
+            <p>One question = one attempt. Getting a question wrong then right still counts as one attempt, marked correct.</p>
+            <p>When you set a new best, a small ★ appears next to the value to flag it.</p>
+            <p className="text-purple-300/70 text-[12px]">In modes designed for casual practice (Classic, Deduction, Flash), you can tap any stat to hide it. Tapping Score, Accuracy, or Streak hides all three; tapping any timing stat hides all three. Score, Accuracy, and Streak continue tracking in the background while hidden — re-enabling them brings the same numbers back. Timing stats behave differently: timing pauses entirely while hidden — no times are recorded. When you turn timing back on, the current date is regenerated if it's still unanswered; if you've already answered wrong, revealed the answer, or shown codes, the date stays until you advance yourself. If any questions were answered while timing was hidden, a desync would arise on re-enable, so the three timing stat boxes merge into a single "Enable and Reset Stats?" confirmation — tap it again within 3 seconds to confirm (turn on and full reset), or tap anywhere else to cancel. When Save Stats is off, all stat boxes site-wide (across every mode, including AoX) show '—' with strikethrough labels, dim, and become non-interactive — toggling timing or scoring is disabled until Save Stats is turned back on, which prevents accidentally creating stat desyncs. Turning Save Stats on while timing is also on regenerates an unanswered date for a clean fresh start. When timing stats are off, leaving and returning to a mode preserves the current question exactly as you left it — same date, same answers, codes panel in the same state. In all other modes, stats are always visible.</p>
+          </GuideSection>
+          <Divider label="Settings"/>
+          <GuideSection id="dateformat" title="Date Format" openId={open} onToggle={toggle}><p>Set via the ⚙ settings menu. Choose one of five real-world formats: <b>Written MDY</b> (April 27, 1828), <b>Written DMY</b> (27 April 1828), <b>Numeric MDY</b> (4/27/1828), <b>Numeric DMY</b> (27.4.1828), or <b>Numeric YMD</b> (1828-4-27). Numeric formats use a fixed separator convention: MDY uses '/', DMY uses '.', YMD uses '-'. Years always show in full, never abbreviated.</p><p>Only DMY, MDY, and YMD orderings are offered because those are the only orderings actually used in real life — orderings like YDM aren't standard anywhere.</p><p><b>Random Format</b>, when on, rolls one of the five formats per date in game modes only — your selected format is preserved underneath (the panels just lock visually). Lookup and the Last Updated timestamp ignore Random and always use the selected format. The Last Updated timestamp uses the numeric version of whichever format you've selected.</p><p>In Classic, Deduction, Flash, and AoX (idle), any format setting change — Random Format toggle or Date Format dropdown — regenerates an unanswered date so you don't return to a previously-seen date in a now-mismatched format. This applies across all modes: if you change a format setting in one mode, any unanswered dates in the other modes are also regenerated. If you've already made a wrong guess, revealed the answer, or shown codes on the displayed date, the change is deferred — the burned state is preserved and the new format applies on the next generated date. In active Blitz rounds and AoX runs, any format change ends the round.</p><p>In game modes' Show Codes, codes appear in the order the date is read (left to right), with Leap shown once you've seen both the year and month.</p></GuideSection>
+          <GuideSection id="julian" title="Julian Calendar" openId={open} onToggle={toggle}><p>Toggle via the ⚙ settings menu under Calendar System. On by default. When on, dates on or before October 4, 1582 are treated as Julian calendar dates, which have different leap year rules — every year divisible by 4 is a leap year, with no century exception. This affects weekday calculation and the codes shown in Show Codes. October 5–14, 1582 are always excluded since those dates never existed; the Gregorian calendar skipped them to correct accumulated calendar drift.</p><p>Toggling Julian doesn't necessarily regenerate the current date. For dates after October 4, 1582, Julian has no effect. For Julian-eligible dates (October 4, 1582 or earlier), the date stays if you haven't made a wrong guess yet — the answer and codes simply update. If you've already wrong-guessed, the date regenerates and is added to your history with both your red guess and a green for the day that was correct under the calendar system in effect when the date was first generated. Each date snapshots its calendar system at generation, so revisiting an earlier question via Back shows the highlights and codes that were correct under the system in effect when that date was generated. In active Blitz rounds and AoX runs, any Julian toggle ends the round.</p><p><b>Julian Chance</b> (also under Calendar System) sets how often a generated date lands in the Julian calendar period (pre-Oct 15, 1582) — Random uses the natural rate (which depends on your year range, ~16% on the default 1–10000 range); 25%, 50%, 75%, and 100% force higher rates. The listed percentage is the exact final rate of Julian dates, not a force probability. The five buttons are locked and faded in three cases: when the Julian Calendar toggle above is off (no Julian dates can be generated regardless), when your year range is entirely post-Gregorian (minimum year is 1583 or later, so no Julian dates exist in range), or when your year range is entirely pre-Gregorian (maximum year is 1581 or earlier, so every date is already Julian and the setting has nothing to do). Year 1582 itself contains both Julian (Jan-Sep + Oct 1-4) and Gregorian (Oct 15+ + Nov + Dec) dates, so any range that includes 1582 counts as mixed and the row stays unlocked. The previously-selected value stays visually selected while locked so it's restored when the lock condition clears. Changing the chance value always regenerates an unanswered date; burned dates defer like every other setting.</p></GuideSection>
+          <GuideSection id="range" title="Year Range" openId={open} onToggle={toggle}><p>Set via the ⚙ settings menu. Controls which years dates are drawn from. Defaults to 1–10000 AD. Changing the range always regenerates the current date — but if you've already made a wrong guess on the current date, the change is deferred so the wrong-state is preserved; the new range applies to the next date. While browsing back, settings-driven regen always preserves your history: the date you were viewing and any forward entries are pushed back to history before the live slot is regenerated. In active Blitz rounds and AoX runs, any range change ends the round.</p><p><b>Year sub-mode auto-disable:</b> Deduction's Year sub-mode requires either a year range of at least 5 years (so a 5-year window can be built) or, with Julian on, a range that contains October 15, 1582 (so a 2-year Jul Cross window can be built). When neither condition holds, the Year sub-type button greys out, and if you were already in Year mode when the range changed, you're auto-switched to Day mode. Day and Month sub-modes work for any valid range.</p></GuideSection>
+          <GuideSection id="leap" title="Leap Year Settings" openId={open} onToggle={toggle}><p>Two settings in the ⚙ menu control how often leap years appear and what months they're paired with. <b>Leap Year Chance</b> sets how often a generated date lands on a leap year — Random uses the natural rate (~24%); 50%, 75%, and 100% force higher rates. <b>Jan/Feb Chance on Leap Years</b> sets how often a leap-year date lands on January or February — Random uses the natural rate (~17%, since 2 of 12 months are Jan/Feb); 25%, 50%, 75%, and 100% force higher rates. The listed percentage is the exact final rate of Jan/Feb on leap-year dates, not just a "force probability" — under 50%, exactly half of leap-year dates are Jan/Feb. These settings apply to all game modes' date generation; Lookup is unaffected. If your year range happens to contain no leap years (under the active calendar), the four Leap Year Chance buttons are locked and faded; the previously-selected value stays visually selected so it's restored when you change the range back to one with a leap year reachable. Jan/Feb Chance stays unlocked since the setting still applies on whatever leap years exist in the range. Changing any value in <b>Leap Year Chance</b> or <b>Jan/Feb Chance on Leap Years</b> always regenerates the displayed date so the new setting takes effect immediately. If you've already made a wrong guess, revealed the answer, or shown codes on the current date, either change is deferred so the burned state is preserved; the new setting applies to the next date. In active Blitz rounds and AoX runs, any chance setting change ends the round.</p></GuideSection>
+          <GuideSection id="savestats" title="Save Stats" openId={open} onToggle={toggle}><p>Toggle via the ⚙ settings menu under Stats. On by default. When off, your answers don't update stats or saved bests. The stats panel dims to indicate the off state. Override is locked when Save Stats is off, across all modes. The toggle works differently per mode:</p><p className="mt-2"><b>Classic, Deduction, Flash</b> — per-question. The toggle's value is locked in at the moment of your first stat-affecting action (your first wrong guess on the question, or your correct answer if you got it right on the first try). Toggling afterward doesn't change that question's outcome, but does apply to the next question. If you've already made a wrong guess on the current question, toggling Save Stats does not regenerate the date — the toggle's frozen value sticks for the question. When off, the question doesn't update stats and isn't pushed to history (Back can't browse to it).</p><p className="mt-2"><b>Blitz</b> — round-level. In-round score, accuracy, streak, and Back/Forward navigation through round questions all work normally regardless of the toggle. Whatever the toggle is set to when the round ends determines whether the round's Best Score and Best Streak update.</p><p className="mt-2"><b>AoX</b> — run-level. In-run score, streak, times, and Back/Forward navigation all work normally regardless of the toggle. Whatever the toggle is set to when the run ends determines whether Best Average, Best Median, and Best Streak update.</p></GuideSection>
+          <GuideSection id="theme" title="Theme" openId={open} onToggle={toggle}><p>Five themes: Dusk (default dark navy), Midnight (true black with purple), Nebula (deep purple), Light (clean white), and Parchment (warm cream). Accessible from the ⚙ settings menu in any tab. Enable Use System Settings to match your device's light/dark mode automatically, with separate theme choices for each. Disable to pick one manually.</p></GuideSection>
+          <GuideSection id="reset-settings" title="Reset Settings &amp; Full Reset" openId={open} onToggle={toggle}><p><b>Reset Settings</b> — at the bottom-left of the ⚙ menu, restores everything in the menu to its defaults: Random Format on, Written MDY, Julian on, Julian Chance Random, year range 1–10000, Leap Year Chance Random, Jan/Feb Chance Random, Save Stats on, and theme back to Use System Settings with Dusk (dark) and Light (light). It does not touch mode-specific config outside the menu (AoX N, timer durations, Deduction sub-types and toggles) or your stats and history. No confirmation prompt — tap to apply. When every setting in the menu is already at its default, this button dims and locks since tapping it would have no effect.</p><p><b>Full Reset</b> — at the bottom-right of the ⚙ menu, restores the entire site to its initial launch state. Wipes all stats, all-time bests (Blitz, Sudden, AoX), Lookup history, and in-progress rounds and runs. Resets every setting and toggle across all modes — both the ⚙ menu and the per-mode toggles (AoX N, timer durations, Deduction sub-types and toggles, Allow Mistakes, Save Stats, Stop Codes, etc.). Closes any open overlay (How to Play, ⚙ menu, codes, method breakdown) and switches to Classic. Requires two taps to confirm: tap once and the button changes to "Confirm?"; tap again to fire. Auto-cancels after a few seconds, when you close ⚙, or if you tap any other control. When every setting, toggle, stat, best, history entry, and live state across the entire site is already at its launch value, this button dims and locks since tapping it would have no effect.</p></GuideSection>
+          <GuideSection id="keyboard" title="Keyboard Input" openId={open} onToggle={toggle}><p>On any device with a hardware keyboard (typically desktop), you can press keys to operate the site without tapping. The on-screen layout is identical to mobile — keyboard input is the only desktop-specific addition.</p><div className="mt-3 space-y-3"><div><div className="text-[10px] uppercase tracking-widest text-purple-300/60 mb-1.5">Answer Grid</div><div className="space-y-1 text-sm"><div className="flex items-center gap-2"><Kbd>0</Kbd><span>Sunday</span></div><div className="flex items-center gap-2"><Kbd>1</Kbd><span>Monday</span></div><div className="flex items-center gap-2"><Kbd>2</Kbd><span>Tuesday</span></div><div className="flex items-center gap-2"><Kbd>3</Kbd><span>Wednesday</span></div><div className="flex items-center gap-2"><Kbd>4</Kbd><span>Thursday</span></div><div className="flex items-center gap-2"><Kbd>5</Kbd><span>Friday</span></div><div className="flex items-center gap-2"><Kbd>6</Kbd><span>Saturday</span></div></div><p className="mt-2 text-xs italic">In Deduction Month and Year, the same keys map positionally to the boxes or year options on screen.</p></div><div><div className="text-[10px] uppercase tracking-widest text-purple-300/60 mb-1.5">Game Actions</div><div className="space-y-1 text-sm"><div className="flex items-center gap-2"><Kbd>N</Kbd><span>New / Begin / Reset</span></div><div className="flex items-center gap-2"><Kbd>R</Kbd><span>Reveal</span></div><div className="flex items-center gap-2"><Kbd>O</Kbd><span>Override</span></div><div className="flex items-center gap-2"><Kbd>C</Kbd><span>Show / Hide Codes</span></div><div className="flex items-center gap-2"><Kbd>S</Kbd><span>Reset Stats</span></div><div className="flex items-center gap-2"><Kbd>←</Kbd><span>Back</span></div><div className="flex items-center gap-2"><Kbd>→</Kbd><span>Forward</span></div></div></div><div><div className="text-[10px] uppercase tracking-widest text-purple-300/60 mb-1.5">Overlays</div><div className="space-y-1 text-sm"><div className="flex items-center gap-2"><Kbd>H</Kbd><span>How to Play (toggle)</span></div><div className="flex items-center gap-2"><Kbd>G</Kbd><span>Settings ⚙ (toggle)</span></div><div className="flex items-center gap-2"><Kbd>Tab</Kbd><span>Mode selector (toggle)</span></div></div></div><div><div className="text-[10px] uppercase tracking-widest text-purple-300/60 mb-1.5">Mode Switching</div><div className="space-y-1 text-sm"><div className="flex items-center gap-2"><Kbd>K</Kbd><span>Classic</span></div><div className="flex items-center gap-2"><Kbd>F</Kbd><span>Flash</span></div><div className="flex items-center gap-2"><Kbd>B</Kbd><span>Blitz</span></div><div className="flex items-center gap-2"><Kbd>A</Kbd><span>AoX</span></div><div className="flex items-center gap-2"><Kbd>D</Kbd><span>Deduction</span></div><div className="flex items-center gap-2"><Kbd>L</Kbd><span>Lookup</span></div></div></div></div><p className="mt-3">Letter keys are case-insensitive. Letter and number keys are ignored when you're typing in an input field or when a modifier key (Ctrl/Cmd/Alt/Shift) is held. <Kbd>Tab</Kbd> is the exception: it toggles the mode selector even from inputs (use Esc or Enter to leave an input first if you'd rather), and Tab combined with any modifier (Ctrl+Tab, Ctrl+Shift+Tab, etc.) passes through to the browser. Locked or already-pressed buttons are skipped, just like a click would be. Reset Stats (S) only applies to the casual modes (Classic, Deduction, Flash); pressing it in Blitz, AoX, or Lookup is a no-op since those modes don't have a separate Reset Stats button (their round/run Reset clears in-round/in-run stats; persistent bests update only when set).</p></GuideSection>
+          <Divider label="Modes"/>
+          <GuideSection id="classic" title="Classic" openId={open} onToggle={toggle}><p>The main practice mode with no time pressure. Answer at your own pace. Override works after both wrong and correct answers. Reset Stats clears your stats and question history; when timing stats are hidden and you haven't burned the current date, the date is kept.</p></GuideSection>
+          <GuideSection id="aox" title="AoX" openId={open} onToggle={toggle}>
+            <p>Average your times over a set number of correct solves (2–1000). The score shows correct answers out of total attempts; the run ends when correct answers reach your target. Press Begin to start a run.</p>
+            <p><b>Allow Mistakes</b> — wrong answers don't end the run but don't count toward your score.</p>
+            <p><b>One-By-One</b> — hides the date between solves. Press Continue to reveal each new date.</p>
+            <p><b>Last / Avg / Med</b> — tap any of these to show or hide all three time stats.</p>
+            <p><b>Back/Forward</b> — browse previous dates from the current run without affecting it. Press Continue to resume; the date you were viewing and any forward entries are pushed back to your run history before a fresh date is generated, so nothing is lost. After a run completes, Back and Forward let you browse all dates from that run; press Reset to start fresh.</p>
+            <p><b>Override</b> — after wrong: gives credit with time recorded, preserves streak. After correct: undoes the credit, resets streak, and either ends the run (Allow Mistakes off) or advances to a new date (Allow Mistakes on). You can also override past dates while browsing back with Back/Forward. If overriding on the last question with Allow Mistakes on, a new date is generated to complete the average. One override per question. Override is locked when Save Stats is off.</p>
+            <p>Stats in AoX are always visible and always track. Best average and best median are tracked independently — they can come from different runs. Beneath each best, the companion metric from the run that set it is also shown (e.g. the median from the run that set your best average). A <i>Same Round</i> or <i>Different Rounds</i> tag tells you whether your best average and best median came from the same exceptional run, or from two different strong ones. If you override a correct answer that set a new best, the best is also restored. The score display freezes when a run ends and only resets after pressing Reset.</p>
+            <p>Bests are tracked per exact configuration: AoX size (n), Allow Mistakes, Date Format (or Random Format on its own bucket), Leap Year Chance, Jan/Feb Chance on Leap Years, Julian Chance, year range, and Calendar System (Julian on/off). Changing any of these creates a separate bucket — your previous bests remain stored and reappear when you switch back to that exact config.</p>
+            <p>The small <b>Q#</b> label at the top-right of the date card appears not only while back-browsing but also at run end (done/failed) so you can identify which question of the run you're viewing in the summary.</p>
+          </GuideSection>
+          <GuideSection id="deduction" title="Deduction" openId={open} onToggle={toggle}><p>Identify the missing piece of a date given the rest plus the weekday. Choose Day, Month, or Year mode. The displayed date follows your selected Date Format (or random format snapshot, if Random Format is on), with a fixed-width underscore placeholder where the missing piece would normally appear.</p><p className="mt-2"><b>Day</b> — seven consecutive days are shown, each with a unique day code. The correct day can appear in any position. <i>October 1582 with Julian on:</i> days 5–14 don't exist (the Gregorian transition skipped them), so the valid days are 1–4 and 15–31. When the window can't fit seven days on one side of the gap, it shrinks to four — codes 1, 2, 3, 4 repeat at days 15, 16, 17, 18, so a five-day window crossing the gap would have a duplicate code.</p><p className="mt-2"><b>Month</b> — seven fixed boxes group months that share the same month code, so tapping any month within a box gives the same weekday for that date. Tap the box containing the correct month. The boxes are always in the same position. In leap years, January shifts into the Apr/Jul box (becoming Jan/Apr/Jul) and February shifts into the Aug box (becoming Feb/Aug); the other boxes are unchanged. <i>Year 1582 with Julian on:</i> a special layout applies because the Julian/Gregorian transition splits the year — January through September and October 1–4 use Julian (year code +1), while October 15+ and November/December use Gregorian (year code −2). October's box position depends on the day: for days 1–4 it joins Jan and Nov ("Jan/Oct/Nov"); for days 15–31 it joins Jun ("Jun/Oct"); for days 5–14 it's excluded since those dates don't exist. The other six boxes are arranged differently from the standard layout — practice carefully.</p><p className="mt-2"><b>Year</b> — five consecutive year options. Each option has a unique year code, so only the correct year matches the displayed weekday. The correct year can appear in any position. <i>With Julian on:</i> when the five-year window would cross October 15, 1582 (the Julian/Gregorian boundary), it shrinks to two years — the calendar's 10-day jump produces a +5 weekday shift across that boundary that breaks distinctness for any longer window. <i>February 29:</i> only allowed when the window contains at least one leap year (Gregorian or Julian as appropriate). Non-leap years still appear as options but trivially can't be the answer, since Feb 29 doesn't exist in those years.</p><p className="mt-2"><b>Per-mode toggles</b> — Year mode adds <i>ab</i> Cross (left of Day/Month/Year) and Jul Cross (right of Day/Month/Year). Month mode adds 1582 Only (right of Day/Month/Year). These are mode-specific, not in the ⚙ Settings menu, since they only apply to one Deduction sub-mode.</p><p className="mt-2"><b><i>ab</i> Cross</b> (Year mode) — when on, the five-year window must cross a year ending in 00 (any 100-year boundary, both leap and non-leap centuries). Practice the <i>ab</i> code change mid-window. Disabled when your year range doesn't span any 100-year boundary.</p><p className="mt-2"><b>Jul Cross</b> (Year mode) — when on, the two-year window must cross October 15, 1582 (the Julian/Gregorian transition). N=2 always. Disabled when the Julian setting is off, or when your year range doesn't contain 1582 plus at least one of its neighbors (1581 or 1583).</p><p className="mt-2"><b>Both Year toggles on</b> — each puzzle randomly picks (50/50) which constraint to enforce. The two can't both be true for the same window.</p><p className="mt-2"><b>1582 Only</b> (Month mode) — when on, every puzzle uses year 1582, forcing the special split layout described above. Disabled when the Julian setting is off or your year range excludes 1582. When the answer's cell groups months from both calendars, Show Codes uses slash notation (e.g., 1/-3, Julian/Gregorian) for any value that differs across the cell's months; values that are the same across all months collapse to a single value.</p><p className="mt-2">Switch subtypes anytime — progress in each is preserved, including question history. Stats are tracked separately for each subtype, and Back/Forward only walks the current subtype's entries. Reset Stats clears the current subtype's stats and history only; the other subtypes' stats and history are untouched. When timing stats are hidden and you haven't burned the current question, the question is kept.</p></GuideSection>
+          <GuideSection id="flash" title="Flash" openId={open} onToggle={toggle}><p>The date is briefly revealed (0.1s–3.0s, default 0.5s, adjustable via the slider) then hidden. Answer from memory. Reset Stats clears your stats and question history. Mid-question, Reset Stats always generates a new date and returns to the dash state.</p></GuideSection>
+          <GuideSection id="blitz" title="Blitz" openId={open} onToggle={toggle}>
+            <p>Answer as many dates as possible before time runs out. Score shows correct answers for the current round only.</p>
+            <p><b>Allow Mistakes</b> — when on, wrong answers count against accuracy but don't end the round. When off, a wrong answer ends the round immediately.</p>
+            <p><b>Per Round / Per Question</b> — tap to switch. Per Round uses a single countdown for the whole round (10s–3m, default 60s). Per Question gives each question its own countdown (1s–20s, default 5s); running out of time ends the round. Per Question always enforces no mistakes: tapping Per Question auto-disables Allow Mistakes, and tapping Allow Mistakes on while in Per Question auto-switches back to Per Round.</p>
+            <p>When the round ends, the correct answer for the current date is highlighted and your bests are recorded. You can then browse your round's history with Back/Forward and override past dates to adjust your score and saved bests. Overriding a wrong answer that ended the round resumes it.</p>
+            <p>Streak is hidden in Per Question since any wrong answer ends the round, making streak equal to score.</p>
+            <p>Best scores are tracked per exact configuration: timer duration, Allow Mistakes, Per Round/Per Question, Date Format (or Random Format as its own bucket), Leap Year Chance, Jan/Feb Chance on Leap Years, Julian Chance, year range, and Calendar System (Julian on/off). Changing any of these creates a separate bucket — your previous bests remain stored and reappear when you switch back. Best score and best streak are tracked independently in Per Round; a <i>Same Round</i> or <i>Different Rounds</i> tag tells you whether your best score and best streak came from the same exceptional round, or from two different strong ones. If you leave Blitz after a round ends without pressing Reset, the round state (bests, history, final date) is preserved when you return. Press Reset to clear your current round, unlock the settings, and start fresh. Changing settings while idle resets the current round.</p>
+          </GuideSection>
+          <GuideSection id="lookup" title="Lookup" openId={open} onToggle={toggle}><p>Enter any AD date to instantly see its weekday. Lookup input is always numeric and follows your selected Date Format (m/d/y, d.m.y, or y-m-d). Lookup ignores Random Format and always uses the selected format directly. Changing the Date Format clears the input box. Supports years 1–10000. Show Codes is available for all results and stays open as you browse your history. The history panel shows up to 10 entries before scrolling and re-renders live when you change the Date Format. October 5–14, 1582 never existed and will appear in history as "Does Not Exist" with Show Codes unavailable.</p></GuideSection>
+        </div>
+      );
+    }
+
+    // Show Codes panel ordering follows the date's display format (left-to-right reading
+    // order), with Leap appearing once both year and month are visible. mdy/dmy formats:
+    // month/day/ab/cd/leap. ymd format: ab/cd/month/leap/day. Uses the date's _fmt
+    // snapshot when randomFormat is on (passed as displayedFormat), else the user's
+    // selected format.
+    //
+    // When `cellDates` is provided (Deduction Month sub-mode 1582 only — answer cell
+    // groups months from both calendars), each code value is collected across all
+    // interpretations and joined with slashes, deduped via Set (insertion-order
+    // preserved). Calendar text follows the same dedup rule: "Julian/Gregorian Calendar"
+    // not "Julian/Julian/Gregorian". Cell ordering naturally produces Julian-first since
+    // Julian months come first in the cell labels (e.g., Aug/Dec, Jan/Nov).
+    function MethodExplanation({date,useJulian=false,displayedFormat='written-mdy',cellDates=null}){
+      const summaries=React.useMemo(()=>{
+        if(cellDates&&cellDates.length>0)return cellDates.map(cd=>computeMethodSummary(cd,true)).filter(s=>s!=null);
+        return date?[computeMethodSummary(date,useJulian)].filter(s=>s!=null):[];
+      },[cellDates,date?.y,date?.m,date?.d,useJulian]);
+      if(summaries.length===0)return<div className="text-sm text-purple-100/80">Show Codes is only supported for AD dates.</div>;
+      // Collapse-when-same: gather each code's values across all interpretations,
+      // dedup via Set (preserves insertion order), and join with slashes if 2+ unique.
+      const joinDedup=vals=>{const s=[...new Set(vals.map(v=>String(v)))];return s.join('/');};
+      const monthCode=joinDedup(summaries.map(s=>s.monthCode));
+      const dayCode=joinDedup(summaries.map(s=>s.dayCode));
+      const abCode=joinDedup(summaries.map(s=>s.abCode));
+      const cdCode=joinDedup(summaries.map(s=>s.cdCode));
+      const leapValue=joinDedup(summaries.map(s=>String(s.leapCode)));
+      const calendarText=joinDedup(summaries.map(s=>s.calendarSystem))+" Calendar";
+      const codeMap={
+        Month:{label:"Month",italic:false,value:monthCode},
+        Day:{label:"Day",italic:false,value:dayCode},
+        ab:{label:"ab",italic:true,value:abCode},
+        cd:{label:"cd",italic:true,value:cdCode},
+        Leap:{label:"Leap",italic:false,value:leapValue},
+      };
+      // Order the codes left-to-right matching the date format's reading order.
+      // After both year and month appear, Leap is placed.
+      const fmt=displayedFormat||'written-mdy';
+      let order;
+      if(fmt==='numeric-ymd')order=['ab','cd','Month','Leap','Day'];
+      else if(fmt==='written-dmy'||fmt==='numeric-dmy')order=['Day','Month','ab','cd','Leap'];
+      else order=['Month','Day','ab','cd','Leap']; // written-mdy, numeric-mdy, fallback
+      const codes=order.map(k=>codeMap[k]);
+      return(<div><div className="grid grid-cols-5 gap-2 text-center text-sm">{codes.map((c,i)=>(<div key={i} className="flex flex-col gap-1"><div className="text-[11px] text-purple-200/80">{c.italic?<i>{c.label}</i>:c.label}</div><div className="font-semibold tabular-nums text-purple-50">{c.value}</div></div>))}</div><div className="mt-2 text-center text-[11px] text-purple-300/60">{calendarText}</div></div>);
+    }
+
+    function MethodBreakdownSection({date,open:controlledOpen,onOpenChange,className,contentClassName,useJulian=false,displayedFormat='written-mdy',cellDates=null}){
+      const isControlled=typeof controlledOpen==="boolean"&&typeof onOpenChange==="function";
+      const [internalOpen,setInternalOpen]=React.useState(false);
+      // Frozen values for the codes panel — kept in lockstep so MethodExplanation sees a
+      // self-consistent snapshot during the close animation (no prop leaks during the 310ms
+      // CODES_CLOSE_MS window).
+      const [frozenDate,setFrozenDate]=React.useState(date);
+      const [frozenDisplayedFormat,setFrozenDisplayedFormat]=React.useState(displayedFormat);
+      const [frozenCellDates,setFrozenCellDates]=React.useState(cellDates);
+      const [frozenUseJulian,setFrozenUseJulian]=React.useState(useJulian);
+      // Latest-value refs (updated every render) so the close-timeout reads the freshest
+      // values when it fires after CODES_CLOSE_MS.
+      const latestDateRef=React.useRef(date);
+      const latestDisplayedFormatRef=React.useRef(displayedFormat);
+      const latestCellDatesRef=React.useRef(cellDates);
+      const latestUseJulianRef=React.useRef(useJulian);
+      latestDateRef.current=date;
+      latestDisplayedFormatRef.current=displayedFormat;
+      latestCellDatesRef.current=cellDates;
+      latestUseJulianRef.current=useJulian;
+      const wasOpenRef=React.useRef(isControlled?!!controlledOpen:false);
+      // closingRef is true between the moment the panel begins closing and the moment the
+      // CODES_CLOSE_MS timer fires. While true, dep changes (e.g. user clicks Forward within
+      // 310ms of Hide Codes) re-arm the timer rather than falling into the else branch, which
+      // would otherwise snap frozen values to the live ones mid-animation — visible as the
+      // panel's contents changing while the panel is still sliding shut.
+      const closingRef=React.useRef(false);
+      const key=date?`${date.y}-${date.m}-${date.d}`:"";
+      React.useEffect(()=>{if(!isControlled)setInternalOpen(false);},[key,isControlled]);
+      const hasDate=!!date;
+      React.useEffect(()=>{if(hasDate)return;if(isControlled){if(controlledOpen)onOpenChange(false);}else setInternalOpen(false);},[hasDate,isControlled,controlledOpen,onOpenChange]);
+      const open=hasDate?(isControlled?controlledOpen:internalOpen):false;
+      const toggle=()=>{if(!hasDate)return;if(isControlled)onOpenChange(!open);else setInternalOpen(v=>!v);};
+      // Content-derived key for cellDates so identity-unstable inline-built arrays in the
+      // Deduction parent don't fire this effect on every parent render.
+      const cellDatesKey=cellDates?cellDates.map(c=>`${c.y}-${c.m}-${c.d}`).join('|'):'';
+      // === Freeze contract ===
+      // While the codes panel is open, all four inputs to MethodExplanation (date,
+      // displayedFormat, cellDates, useJulian) track their live values. When the panel
+      // transitions from open→closed, all four are HELD at their current values for
+      // CODES_CLOSE_MS (matches the Expander's 280ms close animation + buffer), then
+      // released to the latest values after the close completes.
+      // Callers that mutate any of the four inputs MUST batch setCalcOpen(false) into
+      // the same React update; otherwise this effect fires once with (open=true,
+      // newInputs) and updates the frozen values immediately, defeating the freeze.
+      // Mutators that honor this contract: pushAndNext, goBack, goForward,
+      // runDeductionRound, sctn, the dedType useEffect, handleResetStats, the blitz
+      // config-change effect.
+      React.useEffect(()=>{
+        if(!date)return;
+        if(open){
+          wasOpenRef.current=true;
+          closingRef.current=false;
+          setFrozenDate(date);
+          setFrozenDisplayedFormat(displayedFormat);
+          setFrozenCellDates(cellDates);
+          setFrozenUseJulian(useJulian);
+          return;
+        }
+        if(wasOpenRef.current||closingRef.current){
+          wasOpenRef.current=false;
+          closingRef.current=true;
+          const t=setTimeout(()=>{
+            closingRef.current=false;
+            setFrozenDate(latestDateRef.current);
+            setFrozenDisplayedFormat(latestDisplayedFormatRef.current);
+            setFrozenCellDates(latestCellDatesRef.current);
+            setFrozenUseJulian(latestUseJulianRef.current);
+          },CODES_CLOSE_MS);
+          return()=>clearTimeout(t);
+        }else{
+          setFrozenDate(date);
+          setFrozenDisplayedFormat(displayedFormat);
+          setFrozenCellDates(cellDates);
+          setFrozenUseJulian(useJulian);
+        }
+      },[open,date,displayedFormat,useJulian,cellDatesKey]);
+      return(<div className={className??"mt-5"}><button type="button" data-key="C" onClick={toggle} className={`w-full px-4 py-2 rounded-xl btn-solid text-sm font-medium${!hasDate?" opacity-60 cursor-not-allowed pointer-events-none":""}`} aria-disabled={!hasDate}>{open?"Hide Codes":"Show Codes"}</button><Expander open={open&&hasDate}><div className={contentClassName??"mt-3 rounded-2xl panel p-4 pb-1"}><MethodExplanation date={frozenDate} useJulian={frozenUseJulian} displayedFormat={frozenDisplayedFormat} cellDates={frozenCellDates}/></div></Expander></div>);
+    }
+
+    function LookupCard({history=[],onAddHistory,onMoveHistory,onClearHistory,inputValue="",onInputChange,outputValue="",onOutputChange,calcDate,onCalcDateChange,selectedHistoryId,onSelectedHistoryIdChange,calcOpen=false,onCalcOpenChange,fmtDate,dateFormat='written-mdy',useJulian=false}){
+      const li=typeof inputValue==="string"?inputValue:String(inputValue??"");
+      const sli=typeof onInputChange==="function"?onInputChange:()=>{};
+      const lo=typeof outputValue==="string"?outputValue:String(outputValue??"");
+      const slo=typeof onOutputChange==="function"?onOutputChange:()=>{};
+      const cdv=calcDate??null;const scd=typeof onCalcDateChange==="function"?onCalcDateChange:()=>{};
+      const sid=selectedHistoryId??null;const ssid=typeof onSelectedHistoryIdChange==="function"?onSelectedHistoryIdChange:()=>{};
+      const cov=!!calcOpen;
+      // Lookup history scroll-state tracking. Three flags drive edge indicators:
+      //   lookupHistoryScrolledFromTop → top fade + History header shadow (down)
+      //   lookupHistoryAtBottom        → bottom fade + MethodBreakdown shadow (up)
+      // Defaults: scrolledFromTop false, atBottom true. ResizeObserver covers the case
+      // where the list grows from 9→10 entries while the user is viewing it.
+      const lookupHistoryRef=React.useRef(null);
+      const [lookupHistoryAtBottom,setLookupHistoryAtBottom]=React.useState(true);
+      const [lookupHistoryScrolledFromTop,setLookupHistoryScrolledFromTop]=React.useState(false);
+      React.useEffect(()=>{
+        const el=lookupHistoryRef.current;if(!el)return;
+        const evaluate=()=>{
+          const noOverflow=el.scrollHeight<=el.clientHeight+1;
+          setLookupHistoryAtBottom(noOverflow||el.scrollTop+el.clientHeight>=el.scrollHeight-4);
+          setLookupHistoryScrolledFromTop(!noOverflow&&el.scrollTop>0);
+        };
+        evaluate();
+        el.addEventListener('scroll',evaluate,{passive:true});
+        const ro=new ResizeObserver(evaluate);
+        ro.observe(el);
+        return()=>{el.removeEventListener('scroll',evaluate);ro.disconnect();};
+      },[history]);
+      // Codes-open is purely global state — it stays as-is when the user clicks through
+      // history entries, only changing on (1) a manual toggle, (2) a brand-new lookup
+      // via runLookup, or (3) MethodBreakdownSection's auto-close when the displayed
+      // date becomes null (e.g., clicking a "Does Not Exist" gap entry). Earlier per-entry
+      // tracking via calcOpenByEntry was removed because it made codes auto-close on
+      // every history click that landed on an entry whose codes had never been opened.
+      const sco=typeof onCalcOpenChange==="function"?next=>onCalcOpenChange(!!next):()=>{};
+      const lastLookupRef=React.useRef(null);
+      const lookupInputRef=React.useRef(null);
+      // LookupCard uses module-level isLeap/dim/wday/numericFormatOf — no local duplicates.
+      // Map any selected dateFormat to its corresponding Numeric format for input parsing.
+      const numericFmtForInput=numericFormatOf(dateFormat);
+      // Pattern + example based on which numeric format applies.
+      const inputMeta=(()=>{
+        if(numericFmtForInput==='numeric-mdy')return{label:'m/d/y',example:'7/4/1776',sep:'/',orderType:'mdy'};
+        if(numericFmtForInput==='numeric-dmy')return{label:'d.m.y',example:'4.7.1776',sep:'.',orderType:'dmy'};
+        return{label:'y-m-d',example:'1776-7-4',sep:'-',orderType:'ymd'};
+      })();
+      // Clear the input when the format changes (silently keeping it would be confusing since it might no longer parse).
+      // Use a ref to skip the initial mount so navigating to Lookup doesn't wipe the user's existing input.
+      const prevFormatRef=React.useRef(dateFormat);
+      React.useEffect(()=>{
+        if(prevFormatRef.current!==dateFormat){
+          sli("");slo("");ssid(null);scd(null);sco(false);lastLookupRef.current=null;
+          prevFormatRef.current=dateFormat;
+        }
+      },[dateFormat]);
+      function runLookup(){
+        const s=li.trim();
+        // Build regex based on the input format. Year accepts 1–5 digits, month/day 1–2 digits.
+        const sepEsc=inputMeta.sep==='.'?'\\.':inputMeta.sep==='-'?'-':'/';
+        let match;
+        if(inputMeta.orderType==='ymd')match=new RegExp(`^(\\d{1,5})${sepEsc}(\\d{1,2})${sepEsc}(\\d{1,2})$`).exec(s);
+        else match=new RegExp(`^(\\d{1,2})${sepEsc}(\\d{1,2})${sepEsc}(\\d{1,5})$`).exec(s);
+        if(!match){ssid(null);slo(`Enter date as ${inputMeta.label}, e.g. ${inputMeta.example}`);lookupInputRef.current?.focus();return;}
+        let mm,dd,yy;
+        if(inputMeta.orderType==='ymd'){yy=+match[1];mm=+match[2];dd=+match[3];}
+        else if(inputMeta.orderType==='mdy'){mm=+match[1];dd=+match[2];yy=+match[3];}
+        else{dd=+match[1];mm=+match[2];yy=+match[3];}
+        if(yy<1||yy>10000){ssid(null);slo("Year must be between 1 and 10000");lookupInputRef.current?.focus();return;}
+        if(mm<1||mm>12){ssid(null);slo("Month must be 1–12");lookupInputRef.current?.focus();return;}
+        const existing=entries.find(e=>e.y===yy&&e.m===mm&&e.d===dd);
+        if(existing){
+          if(onMoveHistory)onMoveHistory(existing.id);
+          slo(existing.result);ssid(existing.id);
+          if(existing.isGap){scd(null);sco(false);}else scd({y:yy,m:mm,d:dd});
+          lastLookupRef.current=s;lookupInputRef.current?.blur();return;
+        }
+        if(isGapDate(yy,mm,dd)){
+          const gapMsg="October 5–14, 1582 never existed. When the Gregorian calendar was adopted, 10 days were skipped to correct accumulated calendar drift.";
+          const displayDate=fmtDate?fmtDate(yy,mm,dd):`${MONTH[mm-1]} ${dd}, ${yy}`;
+          const entry={id:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,label:displayDate,weekday:"Does Not Exist",result:gapMsg,y:yy,m:mm,d:dd,isGap:true};
+          lastLookupRef.current=s;slo(gapMsg);scd(null);ssid(entry.id);sco(false);if(onAddHistory)onAddHistory(entry);lookupInputRef.current?.blur();return;
+        }
+        const julian=useJulian&&isJulianDate(yy,mm,dd);
+        const maxd=dim(yy,mm,julian);
+        if(dd<1||dd>maxd){ssid(null);slo(`Day must be 1–${maxd} for ${MONTH[mm-1]}`);lookupInputRef.current?.focus();return;}
+        const wd=julian?wdayJulian(yy,mm,dd):wday(yy,mm,dd);
+        const d=DAY[wd];
+        const displayDate=fmtDate?fmtDate(yy,mm,dd):`${MONTH[mm-1]} ${dd}, ${yy}`;
+        const rt=`${displayDate} is a ${d}.`;
+        const entry={id:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,label:displayDate,weekday:d,result:rt,y:yy,m:mm,d:dd};
+        lastLookupRef.current=s;slo(rt);scd({y:yy,m:mm,d:dd});ssid(entry.id);sco(false);if(onAddHistory)onAddHistory(entry);lookupInputRef.current?.blur();
+      }
+      function clearLookup(){sli("");slo("");scd(null);ssid(null);sco(false);lastLookupRef.current=null;}
+      const entries=Array.isArray(history)?history:[];
+      React.useEffect(()=>{if(!sid)return;if(!entries.some(e=>e.id===sid)){ssid(null);scd(null);slo("");sco(false);}},[entries,sid]);
+      // Selecting a history entry never changes calcOpen directly. For non-gap entries,
+      // codes-open simply stays as-is. For gap entries (Does Not Exist), calcDate becomes
+      // null, which triggers MethodBreakdownSection's hasDate auto-close effect.
+      // Selecting any history entry (by tap, click, or Enter via keyboard nav) populates the input
+      // with that date — convenient for re-running a lookup or editing it. The input is always
+      // numeric (per the input's contract; the displayed history label may be written), so
+      // populate using the numeric form of the selected dateFormat regardless of how the
+      // history row reads.
+      const selEntry=entry=>{if(!entry)return;ssid(entry.id);slo(entry?.result||"");if(entry.isGap){scd(null);lastLookupRef.current=null;}else{if(typeof entry.y==="number")scd({y:entry.y,m:entry.m,d:entry.d});}const renderedLabel=typeof entry.y==='number'?fmt(entry.y,entry.m,entry.d,numericFmtForInput):entry.label;if(typeof renderedLabel==='string')sli(renderedLabel);if(document.activeElement)document.activeElement.blur();};
+      const clearHist=()=>{if(onClearHistory)onClearHistory();ssid(null);scd(null);slo("");sco(false);lastLookupRef.current=null;};
+      const displayNote=React.useMemo(()=>{const selectedEntry=entries.find(e=>e.id===sid);if(selectedEntry&&!selectedEntry.isGap&&typeof selectedEntry.y==='number'&&isJulianDate(selectedEntry.y,selectedEntry.m,selectedEntry.d)){const isJul=useJulian;const wd=isJul?wdayJulian(selectedEntry.y,selectedEntry.m,selectedEntry.d):wday(selectedEntry.y,selectedEntry.m,selectedEntry.d);const displayDate=fmtDate?fmtDate(selectedEntry.y,selectedEntry.m,selectedEntry.d):`${MONTH[selectedEntry.m-1]} ${selectedEntry.d}, ${selectedEntry.y}`;return`${displayDate} is a ${DAY[wd]} (${isJul?"Julian":"Gregorian"}).`;}return lo;},[sid,entries,useJulian,fmtDate,lo]);
+      const getEntryWeekday=e=>{if(e.isGap)return"Does Not Exist";if(typeof e.y==='number'&&isJulianDate(e.y,e.m,e.d)){const wd=useJulian?wdayJulian(e.y,e.m,e.d):wday(e.y,e.m,e.d);return DAY[wd];}return e.weekday;};
+      // History entries are stored as {y,m,d} so changing dateFormat re-renders labels live.
+      const renderedEntries=React.useMemo(()=>entries.map(e=>{if(e.isGap||typeof e.y!=='number')return e;return{...e,label:fmtDate?fmtDate(e.y,e.m,e.d):e.label};}),[entries,fmtDate,dateFormat]);
+      // Keyboard navigation for the Lookup card when no input has focus:
+      //   ArrowDown/ArrowUp — move highlighted history entry; selecting populates input.
+      //   Backspace/Delete  — clear the Lookup input box (matches the Clear button).
+      // When an input IS focused, all keys pass through unchanged so typing & native cursor
+      // handling (including ↑/↓ jumping cursor to start/end on single-line inputs) work normally.
+      React.useEffect(()=>{
+        const h=e=>{
+          const ae=document.activeElement;
+          const inInput=ae&&(ae.tagName==="INPUT"||ae.tagName==="TEXTAREA"||ae.isContentEditable);
+          if(inInput)return;
+          if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+            if(renderedEntries.length===0)return;
+            e.preventDefault();
+            const idx=renderedEntries.findIndex(x=>x.id===sid);
+            const next=e.key==="ArrowDown"?Math.min(renderedEntries.length-1,(idx<0?-1:idx)+1):Math.max(0,(idx<0?renderedEntries.length:idx)-1);
+            selEntry(renderedEntries[next]);
+            return;
+          }
+          if(e.key==="Backspace"||e.key==="Delete"){
+            // Clear the Lookup input box (matching what the Clear button does), NOT the history.
+            // Only fires when the input doesn't have focus — when it does, Backspace/Delete edit
+            // the input character-by-character as normal.
+            if(!li&&!lo&&!cdv)return;
+            e.preventDefault();
+            clearLookup();
+            return;
+          }
+        };
+        document.addEventListener('keydown',h);
+        return()=>document.removeEventListener('keydown',h);
+      },[renderedEntries,sid,li,lo,cdv]);
+      return(
+        <div className="mt-1 space-y-4">
+          <div className="rounded-2xl panel p-4 space-y-4">
+            <div className="flex flex-wrap items-stretch gap-2">
+              <input ref={lookupInputRef} value={li} onChange={e=>sli(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();runLookup();}}} placeholder={`e.g., ${inputMeta.example}`} className="panel rounded-xl px-3 py-2 focus:outline-none focus-ring flex-1 min-w-0"/>
+              <button type="button" onClick={runLookup} onMouseDown={e=>e.preventDefault()} className="px-4 py-2 rounded-xl btn-solid text-sm font-medium">Lookup</button>
+              <button type="button" onClick={clearLookup} onMouseDown={e=>e.preventDefault()} className="px-4 py-2 rounded-xl bg-zinc-700 text-white text-sm font-medium">Clear</button>
+            </div>
+            {displayNote&&<div className="text-sm text-purple-100/90">{displayNote}</div>}
+            <p className="text-xs text-purple-100/90">Format: <b>{inputMeta.label}</b><br/>AD dates only, 1–10000</p>
+          </div>
+          <div className="rounded-2xl panel p-4 space-y-4">
+            {/* History header: divider line below extends to full panel width via -mx-4
+                + px-4 (so the line cuts edge-to-edge instead of stopping short at the
+                parent's p-4). lookup-history-header class is for the box-shadow transition
+                hook (see CSS). elev-shadow-down + the divider line together signal "fixed
+                header above content scrolling below" — same pattern as the popover sticky
+                footer's elev-shadow-up. */}
+            <div className={`lookup-history-header -mx-4 px-4 pb-3 border-b border-purple-500/40 flex items-center justify-between text-[11px] uppercase tracking-wide text-purple-200/70${lookupHistoryScrolledFromTop?" elev-shadow-down":""}`}><span>History</span>{entries.length>0&&(<button type="button" onClick={clearHist} className="text-purple-200/70 font-medium">Clear History</button>)}</div>
+            {renderedEntries.length>0?(<ul ref={lookupHistoryRef} className={`space-y-2 overflow-y-auto overscroll-contain max-h-[440px]${lookupHistoryScrolledFromTop&&!lookupHistoryAtBottom?" fade-scroll-both":lookupHistoryScrolledFromTop?" fade-scroll-top":!lookupHistoryAtBottom?" fade-scroll-bottom":""}`}>{renderedEntries.map(e=>(<li key={e.id}><button type="button" onClick={()=>selEntry(e)} className={`w-full text-left px-3 py-2 rounded-xl panel flex items-center justify-between gap-3 text-xs transition ${sid===e.id?"border-l-2 border-l-purple-400 bg-purple-500/35":"hist-unsel hover:bg-purple-500/15"}`}><span className="block text-[13px] font-medium text-purple-100/90">{e.label}</span><span className="text-[12px] font-semibold text-purple-200/80">{getEntryWeekday(e)}</span></button></li>))}</ul>):(<p className="text-sm text-purple-200/70">No lookups yet</p>)}
+            {/* MethodBreakdownSection wrapper: -mx-4 + px-4 extends the existing border-t
+                divider full-width across the panel (was previously stopping short at the
+                parent's p-4). lookup-method-section class hooks the box-shadow transition.
+                elev-shadow-up signals "fixed footer below content scrolling above." */}
+            <MethodBreakdownSection date={cdv} className={`lookup-method-section -mx-4 px-4 pt-4 border-t border-purple-500/40${!lookupHistoryAtBottom?" elev-shadow-up":""}`} contentClassName="mt-3 rounded-2xl panel px-4 pt-[3px] pb-1.5" open={cov} onOpenChange={sco} useJulian={useJulian} displayedFormat={dateFormat}/>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
