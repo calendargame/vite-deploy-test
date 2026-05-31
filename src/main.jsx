@@ -6,6 +6,10 @@ import ErrorBoundary from './ErrorBoundary'
 // ReactDOM.createRoot (mount) and ReactDOM.createPortal (dropdowns/popovers) both work.
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
+import {
+  toAstro, isLeap, isLeapJulian, dim, jdnGregorian, wday,
+  jdnJulian, wdayJulian, isJulianDate, isGapDate, rangeHasLeapYear,
+} from './lib/calendar.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -132,17 +136,7 @@ const ReactDOM = { createRoot, createPortal }
       {label:"Aug/Dec",months:[8,12]},       // sum 2
       {label:"Sep",months:[9]},              // sum 5
     ];
-    const toAstro=y=>y>0?y:1-Math.abs(y);
-    const isLeap=y=>{y=toAstro(y);return y%400===0||(y%4===0&&y%100!==0);};
-    // dim — days-in-month. Optional julian param switches leap-year rule:
-    // off (default) uses Gregorian leap rule (isLeap); on uses Julian (every y%4===0).
-    // All non-Julian callers can omit the param and behavior is unchanged.
-    const dim=(y,m,julian=false)=>{
-      const leap=julian?isLeapJulian(y):isLeap(y);
-      return m===2?(leap?29:28):[4,6,9,11].includes(m)?30:31;
-    };
-    function jdnGregorian(y,m,d){const a=Math.floor((14-m)/12),y2=y+4800-a,m2=m-3+12*a;return d+Math.floor((153*m2+2)/5)+365*y2+Math.floor(y2/4)-Math.floor(y2/100)+Math.floor(y2/400)-32045;}
-    const wday=(y,m,d)=>((jdnGregorian(toAstro(y),m,d)+1)%7+7)%7;
+    // Day-of-week & calendar math (toAstro, isLeap, dim, jdn*, wday*, isJulian*, isGap*, rangeHasLeapYear) → src/lib/calendar.js, imported at top.
     const fmtYear=y=>y>0?String(y):`${Math.abs(y)} BC`;
     // fmt: takes a single format ID. The 5 reachable formats:
     //   written-mdy  → April 27, 1828
@@ -305,26 +299,6 @@ const ReactDOM = { createRoot, createPortal }
     const calcMed=t=>{if(!t.length)return null;const s=[...t].sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;};
     const blockMinus=e=>{if(e.key==="-"||e.key==="Subtract"||e.key==="Minus")e.preventDefault();};
     const blockMinusBI=e=>{if(e.data&&e.data.includes("-"))e.preventDefault();};
-    function jdnJulian(y,m,d){const a=Math.floor((14-m)/12),y2=y+4800-a,m2=m-3+12*a;return d+Math.floor((153*m2+2)/5)+365*y2+Math.floor(y2/4)-32083;}
-    const wdayJulian=(y,m,d)=>((jdnJulian(toAstro(y),m,d)+1)%7+7)%7;
-    const isLeapJulian=y=>{y=toAstro(y);return y%4===0;};
-    // Returns true if [lo,hi] contains at least one leap year, evaluated under the active calendar
-    // (Julian rule for years <1582 when useJulian is on; Gregorian rule otherwise). Used to lock the
-    // Leap Year Chance buttons when no leap year is reachable — without this, setting 50/75/100% would
-    // be silently ignored per date with no visible signal that the setting can't take effect.
-    function rangeHasLeapYear(lo,hi,useJulian){
-      lo=Math.max(1,lo);hi=Math.min(10000,hi);if(lo>hi)return false;
-      // Check every multiple of 4 in [lo,hi]. Non-multiples can't be leap years under either rule.
-      const start=lo+((4-(lo%4))%4);
-      for(let y=start;y<=hi;y+=4){
-        if(y===0)continue;
-        const inJulianRange=useJulian&&y<1582;
-        if(inJulianRange?isLeapJulian(y):isLeap(y))return true;
-      }
-      return false;
-    }
-    const isJulianDate=(y,m,d)=>y<1582||(y===1582&&(m<10||(m===10&&d<=4)));
-    const isGapDate=(y,m,d)=>y===1582&&m===10&&d>=5&&d<=14;
     const JULIAN_AB_MAP=new Map([[0,-2],[1,-3],[2,3],[3,2],[4,1],[5,0],[6,-1],[7,-2],[8,-3],[9,3],[10,2],[11,1],[12,0],[13,-1],[14,-2],[15,-3]]);
 
     // Returns an entry's btns augmented with a synthesized green on the correct
@@ -426,7 +400,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-31T03:39:00Z');
+    const DEPLOY_TS=new Date('2026-05-31T06:47:00Z');
 
     function StatPanel({stats,armedSpan}){
       // For fractional values (Score, Streak as "X/Y"), shrink the value font
