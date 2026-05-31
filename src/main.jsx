@@ -1,4 +1,5 @@
 import * as React from 'react'
+import ErrorBoundary from './ErrorBoundary'
 // The original loaded the full ReactDOM UMD global, which exposes BOTH createRoot and
 // createPortal. The modern modular build splits them: createRoot is in 'react-dom/client',
 // createPortal is in 'react-dom'. Reconstruct a ReactDOM with both so the app's
@@ -425,7 +426,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-29T18:33:00Z');
+    const DEPLOY_TS=new Date('2026-05-31T03:05:00Z');
 
     function StatPanel({stats,armedSpan}){
       // For fractional values (Score, Streak as "X/Y"), shrink the value font
@@ -4480,4 +4481,4 @@ const ReactDOM = { createRoot, createPortal }
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+    ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
