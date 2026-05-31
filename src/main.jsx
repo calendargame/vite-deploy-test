@@ -426,7 +426,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-31T03:05:00Z');
+    const DEPLOY_TS=new Date('2026-05-31T03:39:00Z');
 
     function StatPanel({stats,armedSpan}){
       // For fractional values (Score, Streak as "X/Y"), shrink the value font
@@ -3463,7 +3463,12 @@ const ReactDOM = { createRoot, createPortal }
         // case so dragging the scrollbar doesn't close the popover.
         const onScrollbar=e.target===document.documentElement||e.target===document.body;
         if(onScrollbar)return;
-        if(!inBtn&&!inPop&&!inSel){
+        // Open CustomSelect dropdown panels (the mode select + the theme selects) portal out to
+        // #root with role="listbox", so a tap on an option lands OUTSIDE the popover in the DOM.
+        // Treat that as "inside" so picking a theme/mode doesn't slam the settings popover shut
+        // before the selection registers.
+        const inListbox=!!(e.target&&e.target.closest&&e.target.closest('[role="listbox"]'));
+        if(!inBtn&&!inPop&&!inSel&&!inListbox){
           // Year-range inputs (and any future input in the popover) commit on blur. When closing
           // settings via click-outside on a non-focusable element, the input keeps focus until
           // the popover unmounts — and React's synthetic onBlur doesn't reliably fire on unmount,
