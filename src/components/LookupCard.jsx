@@ -340,7 +340,7 @@ export default function LookupCard({
               }
             }}
             placeholder={`e.g., ${inputMeta.example}`}
-            className="panel rounded-xl px-3 py-2 focus:outline-none focus-ring flex-1 min-w-0"
+            className="panel rounded-xl px-3 py-2 focus:outline-hidden focus-ring flex-1 min-w-0"
           />
           <button
             type="button"

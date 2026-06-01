@@ -3,7 +3,6 @@
 // the Tailwind Play CDN used to do. Vite picks this up automatically.
 export default {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    '@tailwindcss/postcss': {},
   },
 }

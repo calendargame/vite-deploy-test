@@ -1,18 +1,32 @@
-/* index.css — the app stylesheet, compiled by Tailwind (v3) as part of the Vite
-   build. Replaces the Tailwind Play CDN <script> + the inline <style> block that
-   used to live in index.html. The three @tailwind directives inject Tailwind base
-   reset / component / utility layers; the custom CSS below (themes, layout
-   architecture, custom .panel/.btn-solid/etc., flash keyframes, range slider) is
-   preserved verbatim from the old <style> block and intentionally ordered AFTER
-   @tailwind base so its resets layer correctly, and the [data-theme] overrides win.
+/* index.css — the app stylesheet, compiled by Tailwind v4 as part of the Vite
+   build. (History: was the Tailwind Play CDN <script> + an inline <style> block in
+   index.html → moved in-build on Tailwind v3 → upgraded to v4 via @tailwindcss/upgrade.)
+   `@import 'tailwindcss'` pulls in Tailwind's base reset + utilities; the custom CSS
+   below (themes, layout architecture, custom .panel/.btn-solid/etc., flash keyframes,
+   range slider) follows it so its resets layer on top and the [data-theme] overrides win.
+   We accepted v4's modern oklch color palette (a few imperceptible RGB points different
+   from v3's purples — verified visually identical; the better, wider-gamut color system). */
+@import 'tailwindcss';
 
-   Stage C — Tailwind-in-build. Visuals are byte-identical to the v3 CDN; this
-   changes how the CSS is delivered, not how it looks. (v3 -> v4 is a later step.) */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/*
+  v4 changed the default border color from gray-200 to `currentcolor`. We DO have
+  bare `border` utilities (e.g. the answer-grid buttons' baseBtn, paired with
+  surface-button) — VERIFIED 2026-06-01 — so this compatibility shim (added by the
+  upgrade tool) is genuinely load-bearing: it restores v3's gray-200 default so
+  those borders look unchanged. Keep it unless every bare `border` gets an explicit
+  border-color. (--color-gray-200 resolves to v4's oklch(92.8% …).)
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
-/* ----- custom app CSS (moved verbatim from index.html <style>) ----- */
+/* ----- custom app CSS (moved verbatim from index.html \3c style>) ----- */
 :root{--bg1:#0b0714;--bg2:#0b0714;--card-bg:rgba(26,15,43,.98);--card-bd:rgba(120,53,175,.45);--panel-bg:rgba(88,28,135,.25);--panel-bd:rgba(120,53,175,.45);--thin-bd:rgba(120,53,175,.35);--sbtn-bg:rgba(88,28,135,.32);--sbtn-bd:rgba(120,53,175,.52);--sbtn-hov:rgba(88,28,135,.48);--stgl-bg:rgba(88,28,135,.24);--stgl-hov:rgba(88,28,135,.4);--chip-bg:rgba(120,53,175,.25);--chip-bd:rgba(120,53,175,.45);--bar-bg:rgba(120,53,175,.25);--bar-bd:rgba(120,53,175,.45);--body-color:#f5f3ff;--sec-color:rgba(237,233,254,.8);--mut-color:rgba(216,180,254,.7);--fnt-color:rgba(196,181,254,.6);--tc:#0b0714;--shadow-elev:rgba(0,0,0,.5)}
 [data-theme="dusk"]{--bg1:#0d1117;--bg2:#0d1117;--tc:#0d1117;--card-bg:rgba(13,17,23,.97);--card-bd:rgba(99,102,241,.4);--panel-bg:rgba(28,38,68,.35);--panel-bd:rgba(99,102,241,.4);--thin-bd:rgba(99,102,241,.3);--sbtn-bg:rgba(38,48,88,.38);--sbtn-bd:rgba(99,102,241,.5);--sbtn-hov:rgba(38,48,88,.55);--stgl-bg:rgba(28,38,68,.28);--stgl-hov:rgba(28,38,68,.45);--chip-bg:rgba(99,102,241,.2);--chip-bd:rgba(99,102,241,.4);--bar-bg:rgba(99,102,241,.2);--bar-bd:rgba(99,102,241,.4);--shadow-elev:rgba(0,0,0,.5)}
 [data-theme="midnight"]{--bg1:#000;--bg2:#000;--tc:#000;--card-bg:rgba(4,0,12,.93);--card-bd:rgba(139,92,246,.5);--panel-bg:rgba(45,0,90,.28);--panel-bd:rgba(139,92,246,.5);--thin-bd:rgba(139,92,246,.38);--sbtn-bg:rgba(55,0,110,.35);--sbtn-bd:rgba(139,92,246,.55);--sbtn-hov:rgba(55,0,110,.5);--stgl-bg:rgba(45,0,90,.25);--stgl-hov:rgba(45,0,90,.42);--chip-bg:rgba(139,92,246,.2);--chip-bd:rgba(139,92,246,.45);--bar-bg:rgba(139,92,246,.2);--bar-bd:rgba(139,92,246,.45);--shadow-elev:rgba(139,92,246,.18)}

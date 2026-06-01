@@ -288,7 +288,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T03:44:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T03:56:00Z');
 
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 
@@ -398,7 +398,7 @@ const ReactDOM = { createRoot, createPortal }
       // a 150ms multi-property fade on persist (red on wrong, green at end of run)
       // and on flash border-color. Hover fades are handled by surface-button's own
       // targeted 200ms bg-only transition (see <style> block at top of file).
-      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-sm select-none";
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
 
       function reset(){setRunPhase("idle");setDisplayN(n);setShown(false);setInBackMode(false);setAoxStack([]);setAoxForwardStack([]);setTimes([]);setStreak(0);setBestStreak(0);setAttempts(0);setFlash(null);resetAoxPB();setCodesOpen(false);setCanOverrideCorrect(false);setQuestionCounted(false);setPendingWrongCredit(null);setOverrideUsedAox(false);setBestNew({});setDate(genDate(minY,maxY));tStartRef.current=null;wrongTimeRef.current=null;prevTimesSnapRef.current=null;prevStreakSnapRef.current=null;prevBestSnapRef.current=null;}
       useEffect(()=>{if(!visible&&runPhase==="running")reset();},[visible]);
@@ -768,7 +768,7 @@ const ReactDOM = { createRoot, createPortal }
             </div>
           </div>
           <div className="mt-3 flex items-center gap-2 flex-nowrap">
-            <div className="flex items-center shrink-0"><span className={`text-sm leading-none text-purple-200/80${runPhase!=="idle"?" opacity-60":""}`}>Ao</span><input type="text" inputMode="numeric" readOnly={runPhase!=="idle"} value={aoxN} onChange={e=>{if(runPhase==="idle")setAoxN(e.target.value);}} onBlur={()=>setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))));e.currentTarget.blur();}else if(e.key==="Escape"){setAoxN(String(displayN));e.currentTarget.blur();}}} className={`panel rounded-xl px-2 py-1 w-14 text-center tabular-nums text-sm focus:outline-none shrink-0${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}/></div>
+            <div className="flex items-center shrink-0"><span className={`text-sm leading-none text-purple-200/80${runPhase!=="idle"?" opacity-60":""}`}>Ao</span><input type="text" inputMode="numeric" readOnly={runPhase!=="idle"} value={aoxN} onChange={e=>{if(runPhase==="idle")setAoxN(e.target.value);}} onBlur={()=>setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))));e.currentTarget.blur();}else if(e.key==="Escape"){setAoxN(String(displayN));e.currentTarget.blur();}}} className={`panel rounded-xl px-2 py-1 w-14 text-center tabular-nums text-sm focus:outline-hidden shrink-0${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}/></div>
             <button type="button" onClick={()=>{if(runPhase==="idle")setAllowMistakes(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
             <button type="button" onClick={()=>{if(runPhase==="idle")setOneByOne(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${oneByOne?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>One-By-One</button>
           </div>
@@ -2438,7 +2438,7 @@ const ReactDOM = { createRoot, createPortal }
       // a 150ms multi-property fade on persist (red on wrong) and on flash border-color.
       // Hover fades are handled by surface-button's own targeted 200ms bg-only
       // transition (see <style> block at top of file).
-      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-sm select-none";
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
       const idleBtn="surface-button";
       const optionsDisabled=(isTimer(mode)&&!active)||locked||calcOpen||calcPenaltyActive;
       // Layout helper for option grids in 3-col mode. Used by Day sub-mode (N=7 → last button
@@ -3396,15 +3396,15 @@ const ReactDOM = { createRoot, createPortal }
             <div className="flex-1 space-y-1.5">
               <SectionLabel className="text-center">Written</SectionLabel>
               <div className="flex border surface-toggle rounded-xl overflow-hidden">
-                <button type="button" onClick={()=>setDateFormat('written-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='written-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
+                <button type="button" onClick={()=>setDateFormat('written-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-(--sbtn-bd) ${dateFormat==='written-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
                 <button type="button" onClick={()=>setDateFormat('written-dmy')} className={`flex-1 px-2 py-1 text-xs font-medium ${dateFormat==='written-dmy'?"btn-solid text-white":"text-purple-100/80"}`}>DMY</button>
               </div>
             </div>
             <div className="flex-1 space-y-1.5">
               <SectionLabel className="text-center">Numeric</SectionLabel>
               <div className="flex border surface-toggle rounded-xl overflow-hidden">
-                <button type="button" onClick={()=>setDateFormat('numeric-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='numeric-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
-                <button type="button" onClick={()=>setDateFormat('numeric-dmy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-[color:var(--sbtn-bd)] ${dateFormat==='numeric-dmy'?"btn-solid text-white":"text-purple-100/80"}`}>DMY</button>
+                <button type="button" onClick={()=>setDateFormat('numeric-mdy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-(--sbtn-bd) ${dateFormat==='numeric-mdy'?"btn-solid text-white":"text-purple-100/80"}`}>MDY</button>
+                <button type="button" onClick={()=>setDateFormat('numeric-dmy')} className={`flex-1 px-2 py-1 text-xs font-medium border-r border-(--sbtn-bd) ${dateFormat==='numeric-dmy'?"btn-solid text-white":"text-purple-100/80"}`}>DMY</button>
                 <button type="button" onClick={()=>setDateFormat('numeric-ymd')} className={`flex-1 px-2 py-1 text-xs font-medium ${dateFormat==='numeric-ymd'?"btn-solid text-white":"text-purple-100/80"}`}>YMD</button>
               </div>
             </div>
@@ -3426,9 +3426,9 @@ const ReactDOM = { createRoot, createPortal }
         <div className="space-y-2 pt-3 border-t border-purple-500/20">
           <SectionLabel>Year Range</SectionLabel>
           <div className="flex items-center gap-2">
-            <input ref={minInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={minInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMinInputVal(e.target.value);}} onBlur={commitMin} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMin();e.currentTarget.blur();}if(e.key==="Escape"){setMinInputVal(String(minY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-none focus-ring tabular-nums"/>
+            <input ref={minInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={minInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMinInputVal(e.target.value);}} onBlur={commitMin} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMin();e.currentTarget.blur();}if(e.key==="Escape"){setMinInputVal(String(minY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-hidden focus-ring tabular-nums"/>
             <span className="text-purple-300/60 text-sm shrink-0">→</span>
-            <input ref={maxInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={maxInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMaxInputVal(e.target.value);}} onBlur={commitMax} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMax();e.currentTarget.blur();}if(e.key==="Escape"){setMaxInputVal(String(maxY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-none focus-ring tabular-nums"/>
+            <input ref={maxInputRef} type="text" inputMode="numeric" pattern="[0-9]*" value={maxInputVal} onChange={e=>{if(e.target.value===''||/^\d*$/.test(e.target.value))setMaxInputVal(e.target.value);}} onBlur={commitMax} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitMax();e.currentTarget.blur();}if(e.key==="Escape"){setMaxInputVal(String(maxY));e.currentTarget.blur();}blockMinus(e);}} onBeforeInput={blockMinusBI} className="w-16 panel rounded-xl px-2 py-1.5 text-xs text-center focus:outline-hidden focus-ring tabular-nums"/>
           </div>
         </div>
         <div className="space-y-2 pt-3 border-t border-purple-500/20">
@@ -3467,7 +3467,7 @@ const ReactDOM = { createRoot, createPortal }
         <div className="space-y-2 pt-3 border-t border-purple-500/20">
           <SectionLabel>Theme</SectionLabel>
           <div className="flex items-center justify-between"><span className="text-xs text-purple-200/80">Use System Settings</span><button type="button" onClick={()=>setUseSystem(v=>!v)} className={`px-3 py-1 rounded-xl text-xs font-medium border ${useSystem?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}`}>{useSystem?"On":"Off"}</button></div>
-          {useSystem?(<><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Dark:</span><CustomSelect value={darkTheme} onChange={setDarkTheme} options={DARK_THEMES} openUp ariaLabel="Dark theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Light:</span><CustomSelect value={lightTheme} onChange={setLightTheme} options={LIGHT_THEMES} openUp ariaLabel="Light theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div></>):(<div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Theme:</span><CustomSelect value={manualTheme} onChange={setManualTheme} options={ALL_THEMES_LABELED} openUp ariaLabel="Theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-none focus-ring text-left"/></div>)}
+          {useSystem?(<><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Dark:</span><CustomSelect value={darkTheme} onChange={setDarkTheme} options={DARK_THEMES} openUp ariaLabel="Dark theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-hidden focus-ring text-left"/></div><div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Light:</span><CustomSelect value={lightTheme} onChange={setLightTheme} options={LIGHT_THEMES} openUp ariaLabel="Light theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-hidden focus-ring text-left"/></div></>):(<div className="flex items-center gap-3"><span className="text-xs text-purple-200/80 w-10 shrink-0">Theme:</span><CustomSelect value={manualTheme} onChange={setManualTheme} options={ALL_THEMES_LABELED} openUp ariaLabel="Theme" wrapperClassName="flex-1" className="panel rounded-xl px-2 py-1 text-sm w-full focus:outline-hidden focus-ring text-left"/></div>)}
         </div>
         </div>
         <div className={`popover-sticky-footer pt-4 px-4 border-t border-purple-500/20${!popoverAtBottom?" elev-shadow-up":""}`}>
@@ -3485,7 +3485,7 @@ const ReactDOM = { createRoot, createPortal }
         <>
         {/* Bar (position:fixed): the bar is a CHROME-STYLE fixed element above
             everything — explicitly positioned at the viewport top so iOS PWA recognizes
-            it as chrome UI and live-samples its bg-[var(--bg1)] (theme-aware) for the
+            it as chrome UI and live-samples its bg-(--bg1) (theme-aware) for the
             status bar color. Sibling appScrollRef container is position:absolute
             below, with padding-top:var(--bar-h) so its content starts below the bar.
             ResizeObserver elsewhere in App writes the bar's offsetHeight to --bar-h.
@@ -3497,7 +3497,7 @@ const ReactDOM = { createRoot, createPortal }
             also drops mt-5 → mt-2.5 to compensate, so the total gap stays 20px — but the
             visual "lock line" is centered between title row and first panel rather than
             sitting right at the title row's bottom edge. */}
-        <div ref={htpStickyBarRef} style={{position:'fixed',top:0,left:0,right:0,zIndex:30}} className={`htp-sticky-bar bg-[var(--bg1)] w-full pt-5${mode==="guide"?" pb-2.5":""}${appScrolledFromTop?" elev-shadow-down":""}`}>
+        <div ref={htpStickyBarRef} style={{position:'fixed',top:0,left:0,right:0,zIndex:30}} className={`htp-sticky-bar bg-(--bg1) w-full pt-5${mode==="guide"?" pb-2.5":""}${appScrolledFromTop?" elev-shadow-down":""}`}>
           <div className="mx-auto px-4 w-full max-w-[480px] relative">
             <div className="flex items-center justify-between gap-2">
               {/* header left: title */}
@@ -3514,7 +3514,7 @@ const ReactDOM = { createRoot, createPortal }
                     wrapperRef={modeSelectRef} so the existing settings click-outside handler
                     keeps treating taps inside the mode dropdown the same way it treated taps
                     on the original <select>. showChevron renders the same ▲▼ indicator. */}
-                <CustomSelect wrapperRef={modeSelectRef} value={mode} onChange={(v)=>{setMode(v);setSettingsOpen(false);}} options={MODE_LABELS} ariaLabel="Mode" showChevron className="panel rounded-xl px-2.5 py-2 pr-9 text-sm focus:outline-none focus-ring text-left"/>
+                <CustomSelect wrapperRef={modeSelectRef} value={mode} onChange={(v)=>{setMode(v);setSettingsOpen(false);}} options={MODE_LABELS} ariaLabel="Mode" showChevron className="panel rounded-xl px-2.5 py-2 pr-9 text-sm focus:outline-hidden focus-ring text-left"/>
               </div>
             </div>
             {settingsJsx}
@@ -3615,9 +3615,9 @@ const ReactDOM = { createRoot, createPortal }
                   Toggle styling matches Blitz/AoX Allow Mistakes / One-By-One / Per Round buttons
                   exactly (px-2 py-1 rounded-xl text-xs font-medium border) — minus flex-1, since
                   these buttons size to content + min-width rather than stretching to fill.
-                  ab Cross, Jul Cross, and 1582 Only all share min-w-[5rem] so all toggles
+                  ab Cross, Jul Cross, and 1582 Only all share min-w-20 so all toggles
                   are matched-width regardless of their label length.
-                  Day/Month/Year share min-w-[4rem] so all three are the same width as each
+                  Day/Month/Year share min-w-16 so all three are the same width as each
                   other (sized to "Month" the widest of the three with px-2 padding). They use
                   surface-toggle (theme-adaptive border) like the toggles instead of a hard-coded
                   purple border. */}
@@ -3628,7 +3628,7 @@ const ReactDOM = { createRoot, createPortal }
                     const abPossible=Math.floor(Math.max(1,minY)/100)!==Math.floor(maxY/100);
                     const disabled=!abPossible;
                     const active=abCrossOnly&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setAbCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}><i>ab</i> Cross</button>);
+                    return(<button type="button" onClick={()=>{if(disabled)return;setAbCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}><i>ab</i> Cross</button>);
                   })()}
                 </div>
                 <div className="flex gap-2 items-center">
@@ -3636,7 +3636,7 @@ const ReactDOM = { createRoot, createPortal }
                     // Year sub-type button auto-disables when range can't support a buildable
                     // puzzle (yearSubPossible). Day and Month always available.
                     const disabled=t==="year"&&!yearSubPossible;
-                    return(<button key={t} type="button" onClick={()=>{if(disabled)return;changeDedType(t);}} className={`px-2 py-1.5 rounded-xl text-sm font-medium border min-w-[4rem] ${dedType===t?"btn-solid border-transparent text-white":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>{t[0].toUpperCase()+t.slice(1)}</button>);
+                    return(<button key={t} type="button" onClick={()=>{if(disabled)return;changeDedType(t);}} className={`px-2 py-1.5 rounded-xl text-sm font-medium border min-w-16 ${dedType===t?"btn-solid border-transparent text-white":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>{t[0].toUpperCase()+t.slice(1)}</button>);
                   })}
                 </div>
                 <div className="flex justify-end">
@@ -3648,14 +3648,14 @@ const ReactDOM = { createRoot, createPortal }
                     const julPossible=useJulian&&has1582&&(has1581||has1583);
                     const disabled=!julPossible;
                     const active=julCrossOnly&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setJulCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>Jul Cross</button>);
+                    return(<button type="button" onClick={()=>{if(disabled)return;setJulCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>Jul Cross</button>);
                   })()}
                   {dedType==="month"&&(()=>{
                     // 1582 Only disabled when useJulian off or year range excludes 1582.
                     const possible=useJulian&&1582>=minY&&1582<=maxY;
                     const disabled=!possible;
                     const active=monthOnly1582&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setMonthOnly1582(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-[5rem] ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>1582 Only</button>);
+                    return(<button type="button" onClick={()=>{if(disabled)return;setMonthOnly1582(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>1582 Only</button>);
                   })()}
                 </div>
               </div>
