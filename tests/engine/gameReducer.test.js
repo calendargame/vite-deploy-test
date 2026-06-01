@@ -245,6 +245,24 @@ describe('gameReducer — BACK / FORWARD', () => {
   })
 })
 
+describe('gameReducer — LOCK_REVEAL / TIMEOUT_MISS (Blitz timeouts)', () => {
+  it('LOCK_REVEAL shows the answer + locks, with NO stat change (per-round timeout)', () => {
+    const s = gameReducer(initEngine(DATE), { type: 'LOCK_REVEAL', useJulian: false })
+    expect(s.persistBtns).toEqual({ [C]: 'correct' })
+    expect(s.locked).toBe(true)
+    expect(s.revealed).toBe(true)
+    expect(s.stats).toEqual({ played: 0, good: 0, streak: 0, best: 0, times: [] }) // no stat
+    expect(s.countedWrong).toBe(false) // no Override path opens
+  })
+
+  it('TIMEOUT_MISS counts a played miss + shows the answer (per-question timeout)', () => {
+    const s = gameReducer(initEngine(DATE), { type: 'TIMEOUT_MISS', useJulian: false, saveStats: true })
+    expect(s.stats).toMatchObject({ played: 1, good: 0, streak: 0 })
+    expect(s.persistBtns).toEqual({ [C]: 'correct' })
+    expect(s.countedWrong).toBe(false) // distinct from REVEAL — no Override path
+  })
+})
+
 describe('gameReducer — REGEN_DATE', () => {
   const regen = (s) => gameReducer(s, { type: 'REGEN_DATE', nextDate: NEXT })
 

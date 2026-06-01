@@ -71,6 +71,10 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   const fullReset = () => dispatch({ type: 'RESET', timingOff: false, nextDate: newDate() })
   // Clear history + current-question state but KEEP stats (timed-mode "Reset" mid-round).
   const resetRound = () => dispatch({ type: 'RESET_ROUND' })
+  // Show the answer + lock with NO stat change (Blitz per-round timeout).
+  const lockReveal = () => dispatch({ type: 'LOCK_REVEAL', useJulian })
+  // Count a played miss + show the answer (Blitz per-question timeout).
+  const timeoutMiss = () => dispatch({ type: 'TIMEOUT_MISS', useJulian, saveStats })
 
   return {
     state,
@@ -88,5 +92,7 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
     regenDate,
     fullReset,
     resetRound,
+    lockReveal,
+    timeoutMiss,
   }
 }

@@ -277,6 +277,35 @@ export function gameReducer(state, action) {
       return { ...state, date: nextDate, questionId: (state.questionId ?? 0) + 1 }
     }
 
+    // ── LOCK_REVEAL ──────────────────────────────────────────────────────────────
+    // Show the correct answer + lock, WITHOUT any stat change — Blitz's per-round timeout
+    // (the round ended on the clock; the unanswered live question isn't counted, App just
+    // marks the answer and locks). Distinct from REVEAL, which counts a played miss.
+    case 'LOCK_REVEAL': {
+      const { useJulian } = action
+      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      return { ...state, persistBtns: mkBtnsWithCorrect(state.persistBtns, correct), locked: true, revealed: true }
+    }
+
+    // ── TIMEOUT_MISS ─────────────────────────────────────────────────────────────
+    // Blitz per-question (sudden-death) timeout: count a played miss (no `countedWrong`, so
+    // no Override path opens) + show the answer. The round-over lock is the component's
+    // (!active disables the grid). Distinct from LOCK_REVEAL (no stat) + REVEAL (countedWrong).
+    case 'TIMEOUT_MISS': {
+      const { useJulian, saveStats } = action
+      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const effective = effectiveSaveStats(state, saveStats)
+      const stats = effective ? { ...state.stats, played: state.stats.played + 1, streak: 0 } : state.stats
+      return {
+        ...state,
+        saveStatsThisQ: effective,
+        stats,
+        persistBtns: mkBtnsWithCorrect(state.persistBtns, correct),
+        canOverrideCorrect: false,
+        pendingWrongOverride: null,
+      }
+    }
+
     // ── RESET_ROUND ──────────────────────────────────────────────────────────────
     // Clear the history + the current question's transient state but KEEP stats and the
     // current date — App's arm() for the timed modes (Flash/Blitz "Reset" while a round is

@@ -1039,12 +1039,210 @@ const ReactDOM = { createRoot, createPortal }
     }
 
     // ============================================================
+    // BlitzMode — the Blitz game mode on the shared engine (mode-untangle Step 3).
+    //
+    // Self-contained + always-mounted. KEY INSIGHT: App resets stats on every blitz Begin,
+    // so the engine `S` already IS the round score — Blitz needs NO reducer changes. BlitzMode
+    // = the engine + a countdown (Per Round `blitzSec` / Per Question `qSec`) + Best Score/
+    // Streak tracking. Begin = engine.resetStats() (fresh round) + start timer; answering uses
+    // the engine; a round ends on the clock, a per-round wrong with Allow-Mistakes-off, or a
+    // per-Q wrong. Best is reconciled in an effect when a round ends (set to max, tagged with
+    // the round id) and ROLLED BACK there too when an Override drops the round that set it.
+    // ============================================================
+    function BlitzMode({visible,genDate,minY,maxY,useJulian,saveStats,dateFormat,randomFormat,leapChance,janFebChance,julianChance,fmtDate,onFreshChange}){
+      const [perQ,setPerQ]=useState(false);
+      const [allowMistakes,setAllowMistakes]=useState(true);
+      const [active,setActive]=useState(false);
+      const [timerDone,setTimerDone]=useState(false);
+      const [showTimerDate,setShowTimerDate]=useState(false);
+      const [blitzSec,setBlitzSec]=useState(60);
+      const [qSec,setQSec]=useState(5);
+      const [blitzRemain,setBlitzRemain]=useState(60);
+      const [qRemain,setQRemain]=useState(5);
+      const blitzStartRef=useRef(null),blitzPausedAtRef=useRef(null),blitzPausedAccRef=useRef(0),blitzRemainRef=useRef(60);
+      const blitzBarRef=useRef(null),blitzTimeRef=useRef(null);
+      const qDeadlineRef=useRef(null),qPausedAtRef=useRef(null),qPausedAccRef=useRef(0);
+      const suddenBarRef=useRef(null),suddenTimeRef=useRef(null);
+      const [blitzBest,setBlitzBest]=useState({}),[suddenBest,setSuddenBest]=useState({});
+      const [blitzBestNew,setBlitzBestNew]=useState({}),[suddenBestNew,setSuddenBestNew]=useState({});
+      const currentRoundIdRef=useRef(null),nextRoundIdRef=useRef(1);
+      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff:false}); // Blitz: timing always tracked
+      const {state,correct,overrideAvail}=eng;
+      const S=state.stats;
+      const [flash,setFlash]=useState(null);
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+
+      // Per-config Best silos (mirrors App's getBlitzBk / getSuddenBk keys exactly).
+      const blitzBk=`${allowMistakes?'m':'n'}${blitzSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
+      const suddenBk=`${qSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
+
+      const resetTimerBars=()=>{if(blitzBarRef.current)blitzBarRef.current.style.width="100%";if(suddenBarRef.current)suddenBarRef.current.style.width="100%";};
+      const stopRound=()=>{blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;};
+      const endRound=()=>{setActive(false);setShowTimerDate(true);setTimerDone(true);stopRound();};
+
+      // Countdown loop (Per Round drains blitzRemain; Per Question drains qRemain). On 0 the
+      // round ends — per-round timeout shows the answer with no stat (lockReveal); per-Q
+      // timeout counts a miss (timeoutMiss).
+      useEffect(()=>{
+        if(!active)return;
+        let raf;
+        const loop=()=>{
+          const now=performance.now();
+          if(!perQ&&blitzStartRef.current!=null){
+            const t=(now-blitzStartRef.current-blitzPausedAccRef.current)/1000;
+            const r=Math.max(0,blitzSec-t);blitzRemainRef.current=r;
+            const w=Math.max(0,Math.min(100,(r/blitzSec)*100))+"%";
+            if(blitzBarRef.current)blitzBarRef.current.style.width=w;
+            if(blitzTimeRef.current)blitzTimeRef.current.textContent=fmtBlitzT(r);
+            setBlitzRemain(r);
+            if(r<=.001){eng.lockReveal();endRound();return;}
+          }
+          if(perQ&&qDeadlineRef.current!=null){
+            const r=Math.max(0,(qDeadlineRef.current+qPausedAccRef.current-now)/1000);
+            const w=(qSec>0?Math.max(0,Math.min(100,(r/qSec)*100)):100)+"%";
+            if(suddenBarRef.current)suddenBarRef.current.style.width=w;
+            if(suddenTimeRef.current)suddenTimeRef.current.textContent=Math.ceil(r)+"s";
+            setQRemain(r);
+            if(r<=.001){eng.timeoutMiss();endRound();return;}
+          }
+          raf=requestAnimationFrame(loop);
+        };
+        raf=requestAnimationFrame(loop);
+        return ()=>cancelAnimationFrame(raf);
+      },[active,perQ,blitzSec,qSec,eng]);
+
+      const begin=()=>{
+        eng.resetStats();                       // fresh round (S→0, history clear, new date)
+        currentRoundIdRef.current=nextRoundIdRef.current++;
+        setActive(true);setTimerDone(false);setShowTimerDate(false);
+        const now=performance.now();
+        if(!perQ){blitzStartRef.current=now;blitzPausedAccRef.current=0;blitzPausedAtRef.current=null;setBlitzRemain(blitzSec);blitzRemainRef.current=blitzSec;}
+        else{qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}
+        resetTimerBars();
+      };
+      const onAnswer=i=>{
+        if(!active)return;
+        setFlashWithTimeout({type:i===correct?"good":"bad",idx:i});
+        eng.answer(i);
+        if(i===correct){
+          if(perQ){const now=performance.now();qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}
+          // per-round: round continues; engine already advanced to the next date
+        }else{
+          // Wrong: per-Q is sudden death; per-round ends only when Allow Mistakes is off.
+          if(perQ||!allowMistakes){eng.lockReveal();endRound();}
+        }
+      };
+      const onOverride=()=>{if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});eng.override();}; // best reconciled by the effect
+      const onReveal=()=>{eng.reveal();endRound();};
+      const resetRound=()=>{eng.resetStats();setActive(false);setTimerDone(false);setShowTimerDate(false);stopRound();resetTimerBars();}; // App's arm (resets stats for blitz)
+
+      // Reconcile Best when a round is over: set to max(S) tagged with the round id, and roll
+      // back when an Override has dropped the score of the round that set the Best. Runs on
+      // S changes while timerDone (covers both round-end and post-round override).
+      useEffect(()=>{
+        if(!timerDone)return;
+        const rid=currentRoundIdRef.current;
+        if(!perQ){
+          setBlitzBest(prev=>{
+            const cur=prev[blitzBk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
+            let next={...cur};
+            if(S.good>cur.score)next={...next,score:S.good,scoreRoundId:rid};
+            else if(cur.scoreRoundId===rid&&S.good<cur.score)next={...next,score:S.good};
+            if(S.best>cur.streak)next={...next,streak:S.best,streakRoundId:rid};
+            else if(cur.streakRoundId===rid&&S.best<cur.streak)next={...next,streak:S.best};
+            if(next.score===cur.score&&next.streak===cur.streak&&next.scoreRoundId===cur.scoreRoundId&&next.streakRoundId===cur.streakRoundId)return prev;
+            const scoreUp=next.score>cur.score,streakUp=next.streak>cur.streak;
+            if(scoreUp||streakUp)setBlitzBestNew(p=>{const e=p[blitzBk]||{score:false,streak:false};return{...p,[blitzBk]:{score:e.score||scoreUp,streak:e.streak||streakUp}};});
+            return{...prev,[blitzBk]:next};
+          });
+        }else{
+          setSuddenBest(prev=>{
+            const cur=prev[suddenBk]??{score:0,roundId:null};
+            let next={...cur};
+            if(S.good>cur.score)next={score:S.good,roundId:rid};
+            else if(cur.roundId===rid&&S.good<cur.score)next={...next,score:S.good};
+            if(next.score===cur.score&&next.roundId===cur.roundId)return prev;
+            if(next.score>cur.score)setSuddenBestNew(p=>({...p,[suddenBk]:true}));
+            return{...prev,[suddenBk]:next};
+          });
+        }
+      },[timerDone,S.good,S.best,perQ,blitzBk,suddenBk]);
+
+      const togglePerQ=()=>{if(active||timerDone)return;setPerQ(v=>{const n=!v;if(n&&allowMistakes)setAllowMistakes(false);return n;});};
+      const toggleAllowMistakes=()=>{if(active||timerDone)return;setAllowMistakes(v=>!v);};
+
+      const blitzIsFresh=state.stats.played===0&&state.stats.good===0&&state.stats.streak===0&&state.stats.best===0&&state.stats.times.length===0&&state.stack.length===0&&state.forwardStack.length===0&&state.backDepth===0&&state.locked===false&&state.revealed===false&&state.countedWrong===false&&state.canOverrideCorrect===false&&state.pendingWrongOverride===null&&state.overrideUsedThisQ===false&&state.calcOpen===false&&active===false&&timerDone===false&&showTimerDate===false&&perQ===false&&allowMistakes===true&&blitzSec===60&&qSec===5&&Object.keys(blitzBest).length===0&&Object.keys(suddenBest).length===0&&flash===null;
+      useEffect(()=>{onFreshChange&&onFreshChange(blitzIsFresh);},[blitzIsFresh,onFreshChange]);
+
+      const shouldShowTimerDate=active||showTimerDate;
+      const optionsDisabled=!active||state.locked||state.calcOpen||state.calcPenaltyActive;
+      const flashHiding=false;
+      const timerBlocksReveal=!shouldShowTimerDate;
+      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive||timerBlocksReveal||timerDone;
+      const timerBusy=active;
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
+      const idleBtn="surface-button";
+      const showStreak=!perQ;
+      const sOff=!saveStats;
+      const statsArr=[
+        {label:"Score",value:`${S.good}/${S.played}`,off:sOff,fn:null},
+        {label:"Accuracy",value:fmtAccuracyPct(S.good,S.played),off:sOff,fn:null},
+        ...(showStreak?[{label:"Streak",value:`${S.streak}/${S.best}`,off:sOff,fn:null}]:[]),
+        {label:"Last",value:truncTime(calcLast(S.times)),off:sOff,fn:null},
+        {label:"Average",value:fmtTime(calcAvg(S.times)),off:sOff,fn:null},
+        {label:"Median",value:fmtTime(calcMed(S.times)),off:sOff,fn:null},
+      ];
+      const date=state.date;
+      const dateText=shouldShowTimerDate?fmtDate(date.y,date.m,date.d,date._fmt):"—";
+      const bScore=blitzBest[blitzBk],sScore=suddenBest[suddenBk];
+      return(
+        <div style={{display:visible?"block":"none"}}>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr}/></div>
+          {!perQ&&(()=>{const newF=blitzBestNew[blitzBk]||{score:false,streak:false};const showTag=bScore&&bScore.scoreRoundId!=null&&bScore.streakRoundId!=null;return(<div className="mt-3 text-xs text-purple-300/60"><div className="flex flex-wrap items-start gap-4"><div className="min-w-[125px]">Best Score: {bScore?.score??'—'}{newF.score&&<NewBestStar/>}</div><div className="min-w-[125px]">Best Streak: {bScore?.streak??'—'}{newF.streak&&<NewBestStar/>}</div>{showTag&&<span className="shrink-0 ml-auto">{bScore.scoreRoundId===bScore.streakRoundId?"Same Round":"Different Rounds"}</span>}</div></div>);})()}
+          {perQ&&(<div className="mt-3 text-xs text-purple-300/60"><div className="flex flex-wrap items-start gap-4"><div className="min-w-[125px]">Best Score: {sScore?.score??'—'}{suddenBestNew[suddenBk]&&<NewBestStar/>}</div></div></div>)}
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={toggleAllowMistakes} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${(active||timerDone)?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
+            <button type="button" onClick={togglePerQ} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border btn-solid border-transparent${(active||timerDone)?" opacity-60 pointer-events-none":""}`}>{perQ?"Per Question":"Per Round"}</button>
+          </div>
+          <div className="mt-3">{!perQ?(<div className="flex items-center gap-2"><input type="range" min="10" max="180" step="5" value={blitzSec} onChange={e=>{const v=+e.target.value;setBlitzSec(v);if(!active){setBlitzRemain(v);blitzRemainRef.current=v;if(blitzTimeRef.current)blitzTimeRef.current.textContent=fmtBlitzT(v);if(blitzBarRef.current)blitzBarRef.current.style.width="100%";}}} disabled={active||timerDone} style={{"--rng-fill":Math.round((blitzSec-10)/170*100)+"%"}} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-14 shrink-0 text-right">{fmtBlitzT(blitzSec)}</span></div>):(<div className="flex items-center gap-2"><input type="range" min="1" max="20" step="1" value={qSec} onChange={e=>{const v=+e.target.value;setQSec(v);if(!active){setQRemain(v);if(suddenTimeRef.current)suddenTimeRef.current.textContent=v+"s";if(suddenBarRef.current)suddenBarRef.current.style.width="100%";}}} disabled={active||timerDone} style={{"--rng-fill":Math.round((qSec-1)/19*100)+"%"}} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-8 shrink-0 text-right">{qSec}s</span></div>)}</div>
+          <div className="mt-5">
+            {!perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={blitzTimeRef}>{fmtBlitzT(blitzSec)}</span></div><div className="bar"><span ref={blitzBarRef} style={{width:"100%"}}></span></div></div>)}
+            {perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={suddenTimeRef}>{qSec}s</span></div><div className="bar"><span ref={suddenBarRef} style={{width:"100%"}}></span></div></div>)}
+            <div className="mt-4 rounded-2xl panel p-4">
+              <div className="text-center relative">
+                {state.backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{state.stack.length+1}</span>}
+                <div className="text-3xl font-bold">{dateText}</div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
+                {DAY.map((n,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=state.persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={n} type="button" onClick={()=>{if(perLocked)return;onAnswer(i);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{n}</button>);})}
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+              <div className="grid grid-cols-4 gap-2">
+                {(active||timerDone)?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={resetRound}>Reset</button>):(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={begin}>Begin</button>)}
+                <div className="col-span-1 flex gap-1">
+                  <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||state.stack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={eng.back}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                  <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||state.forwardStack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={eng.forward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                </div>
+                <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={onReveal}>Reveal</button>
+                <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
+              </div>
+              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={open=>eng.showCodes(open)} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
     // App — the top-level component for the remaining fused modes
     //
     // Manages mode switching, per-mode preserved state (dateByMode, calcOpenByMode,
     // preservedByModeRef, stacksByModeRef, timerDoneSnapRef), stats tracking, and the
-    // still-fused rendering (Blitz/Deduction/Lookup/How to Play). Classic, Flash + AoX are
-    // their own self-contained components (ClassicMode/FlashMode on the shared engine, AoxMode).
+    // still-fused rendering (Deduction/Lookup/How to Play). Classic, Flash, Blitz + AoX are
+    // their own self-contained components (ClassicMode/FlashMode/BlitzMode on the shared
+    // engine, AoxMode).
     // ============================================================
     function App(){
       const [mode,setMode]=useState("classic");
@@ -2786,7 +2984,7 @@ const ReactDOM = { createRoot, createPortal }
       },[mode,timerDone,perQ,allowMistakes,blitzSec,qSec,randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian]);
       const applyCalcPenalty=()=>{setCalcPenalty(true);const roundOver=(mode==="blitz")&&!active;const fp=!countedWrong&&!revealed;if(fp&&!roundOver){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good};updateStats(c=>{c.played+=1;c.streak=0;});if(mode==="blitz"&&!perQ)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));}/* When back-browsing, skip markCorrect: history entries already have the correct day stamped via entryWithGreen using the date's original _jul snapshot. Re-stamping with live `correct` (which uses live useJulian) would add a second green if the live calendar setting differs from the snapshot. */if(backDepth===0){if(mode==="deduction"&&ded){markCorrect(getDedCorrectIdx());}else if(mode!=="deduction")markCorrect(correct);}if(isTimer(mode)&&active){setActive(false);setShowTimerDate(true);if(mode==="blitz"&&!perQ){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setTimerDone(true);}if(mode==="blitz"&&perQ){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setTimerDone(true);}if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;}}if(!revealed)setRevealed(true);if(!countedWrong){setCountedWrong(true);setCanOverrideCorrect(false);}};
       const handleCalcOpenChange=next=>{if(next&&!(locked&&!revealed&&backDepth>0))applyCalcPenalty();setCalcOpen(next);};
-      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox"&&mode!=="classic"&&mode!=="flash";
+      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox"&&mode!=="classic"&&mode!=="flash"&&mode!=="blitz";
       const sAvg=calcAvg(S.times),sLast=calcLast(S.times),sMed=calcMed(S.times);
       // Date format / randomFormat / leapChance / janFebChance / julianChance now from the
       // settings store (bound at top of App). Semantics unchanged:
@@ -3247,6 +3445,7 @@ const ReactDOM = { createRoot, createPortal }
       // aoxIsFresh. Used by isFullyReset so the Full Reset button reflects Classic's activity.
       const [classicIsFresh,setClassicIsFresh]=useState(true);
       const [flashIsFresh,setFlashIsFresh]=useState(true); // ditto from FlashMode
+      const [blitzIsFresh,setBlitzIsFresh]=useState(true); // ditto from BlitzMode
       // AoxMode is always-mounted-with-display-none (rather than conditionally rendered) so its
       // internal state persists across mode switches — that's intentional UX (a paused AoX
       // run survives a detour into Classic). But it means none of AoxMode's ~25 useStates and
@@ -3259,6 +3458,7 @@ const ReactDOM = { createRoot, createPortal }
       // Full Reset bumps this so Classic returns to its launch state.
       const [classicResetKey,setClassicResetKey]=useState(0);
       const [flashResetKey,setFlashResetKey]=useState(0); // ditto for FlashMode
+      const [blitzResetKey,setBlitzResetKey]=useState(0); // ditto for BlitzMode
       // Scroll-state tracking for the settings popover inner scroll wrapper.
       // Popover inner scroll state. Three flags drive the visual edge indicators:
       //   popoverScrolledFromTop → top fade (no shadow at top — no fixed UI there)
@@ -3458,6 +3658,7 @@ const ReactDOM = { createRoot, createPortal }
         setAoxResetKey(k=>k+1);
         setClassicResetKey(k=>k+1);
         setFlashResetKey(k=>k+1);
+        setBlitzResetKey(k=>k+1);
         // 4. DOM bar refs — visual snap-back so the bars don't show a partially-drained state
         //    until the next render writes them.
         if(blitzBarRef.current)blitzBarRef.current.style.width="100%";
@@ -3618,7 +3819,7 @@ const ReactDOM = { createRoot, createPortal }
       //     freshness) and dedStack (answered rounds), both of which ARE checked.
       //     (Earlier this required ded===null, which kept Full Reset bright after
       //     merely visiting Deduction once — that was the bug this exclusion fixes.)
-      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh&&classicIsFresh&&flashIsFresh;
+      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh&&classicIsFresh&&flashIsFresh&&blitzIsFresh;
       // Safety net (moved here from above so its dep array reads isFullyReset AFTER it's declared):
       // if state somehow flips to fully-reset while the Full Reset button is armed (shouldn't be
       // reachable in practice — fullReset disarms before firing — but defensive), disarm.
@@ -3819,36 +4020,12 @@ const ReactDOM = { createRoot, createPortal }
           <AoxMode key={aoxResetKey} minY={minY} maxY={maxY} visible={mode==="aox"} fmtDate={fmtDate} useJulian={useJulian} genDate={genDate} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} randomFormat={randomFormat} dateFormat={dateFormat} saveStats={saveStats} onFreshChange={setAoxIsFresh}/>
           <ClassicMode key={"classic-"+classicResetKey} visible={mode==="classic"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setClassicIsFresh}/>
           <FlashMode key={"flash-"+flashResetKey} visible={mode==="flash"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setFlashIsFresh}/>
+          <BlitzMode key={"blitz-"+blitzResetKey} visible={mode==="blitz"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setBlitzIsFresh}/>
           {mode==="lookup"&&(<div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div>)}
           {mode==="guide"&&(<div className="mt-2.5"><GuidePage/></div>)}
-          {mode==="blitz"&&(
-            <div className="mt-5">
-              {mode==="blitz"&&!perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={blitzTimeRef}>{fmtBlitzT(blitzSec)}</span></div><div className="bar"><span ref={blitzBarRef} style={{width:"100%"}}></span></div></div>)}
-              {mode==="blitz"&&perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={suddenTimeRef}>{qSec}s</span></div><div className="bar"><span ref={suddenBarRef} style={{width:"100%"}}></span></div></div>)}
-              {mode==="flash"&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1">{fmtFlashT(flashRemainMs)}</div><div className="bar"><span ref={flashBarRef} style={{width:"100%"}}></span></div></div>)}
-              <div className="mt-4 rounded-2xl panel p-4">
-                <div className="text-center relative">
-                  {backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{stack.length+1}</span>}
-                  <div className="text-3xl font-bold">{shouldShowTimerDate?((mode==="flash"&&active&&flashPhase==="hide")?"…":fmtDate(date.y,date.m,date.d,date._fmt)):"—"}</div>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
-                  {DAY.map((n,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={n} type="button" onClick={()=>{if(perLocked)return;submitDoW(i);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{n}</button>);})}
-                </div>
-              </div>
-              <div className="mt-4 rounded-2xl panel p-3 space-y-3">
-                <div className="grid grid-cols-4 gap-2">
-                  {isTimer(mode)?(active?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={arm}>Reset</button>):timerDone?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={arm}>Reset</button>):(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={begin}>Begin</button>)):(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>doNew()}>New</button>)}
-                  <div className="col-span-1 flex gap-1">
-                    <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||stack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={goBack}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
-                    <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(timerBusy||forwardStack.length===0)?"opacity-60 pointer-events-none":""}`} onClick={goForward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
-                  </div>
-                  <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={reveal}>Reveal</button>
-                  <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={override}>Override</button>
-                </div>
-                <MethodBreakdownSection key={mode} date={calcTarget} open={calcOpen} onOpenChange={handleCalcOpenChange} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={backDepth>0?(calcTarget?._jul??useJulian):useJulian} displayedFormat={calcTarget?._fmt||dateFormat}/>
-              </div>
-            </div>
-          )}
+          {/* Classic/Flash/Blitz render via their own self-contained components above
+              (ClassicMode/FlashMode/BlitzMode). Their old inline game block lived here and is
+              now deleted; Deduction's block (below) is the last one still inline in App. */}
           {mode==="deduction"&&(
             <div className="mt-5">
               {/* 3-zone grid keeps Day/Month/Year buttons fixed in the center regardless of which
