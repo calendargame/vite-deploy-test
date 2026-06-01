@@ -288,7 +288,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T02:32:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T02:44:00Z');
 
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 
@@ -3256,9 +3256,11 @@ const ReactDOM = { createRoot, createPortal }
       };
       // Disarm whenever settings closes by any path (gear tap, click-outside, Esc, full-reset firing).
       useEffect(()=>{if(!settingsOpen)disarmFullReset();},[settingsOpen]);
-      // Safety net: if state somehow flips to fully-reset while the button is armed (shouldn't
-      // be reachable in practice — fullReset disarms before firing — but defensive), disarm.
-      useEffect(()=>{if(isFullyReset&&fullResetArmed)disarmFullReset();},[isFullyReset,fullResetArmed]);
+      // NOTE: the "disarm when state flips to fully-reset" safety-net effect was moved to just
+      // after the isFullyReset declaration below — its dependency array reads isFullyReset, which
+      // is declared later, so keeping it here would read isFullyReset before initialization (a TDZ
+      // crash once the block-scoping shim was removed). Effects run after render regardless of source
+      // order, so relocating it is behavior-identical.
       // Site-wide disarm listener (capture phase) — disarms when the user mousedowns/touches
       // any element outside the Full Reset button itself. Capture phase fires before the
       // target's own onClick, so the user's intent (e.g., toggling Random Format, switching
@@ -3376,6 +3378,10 @@ const ReactDOM = { createRoot, createPortal }
       //     (Earlier this required ded===null, which kept Full Reset bright after
       //     merely visiting Deduction once — that was the bug this exclusion fixes.)
       const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh;
+      // Safety net (moved here from above so its dep array reads isFullyReset AFTER it's declared):
+      // if state somehow flips to fully-reset while the Full Reset button is armed (shouldn't be
+      // reachable in practice — fullReset disarms before firing — but defensive), disarm.
+      useEffect(()=>{if(isFullyReset&&fullResetArmed)disarmFullReset();},[isFullyReset,fullResetArmed]);
       // Settings popover. Stays IN the bar (absolute, anchored to the bar's relative
       // inner div via top-full) — only its CustomSelect dropdown PANELS portal out to
       // #root, to escape this overflow scroll context for the frosted-glass blur. Do NOT
