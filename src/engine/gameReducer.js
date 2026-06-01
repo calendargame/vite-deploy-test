@@ -30,6 +30,7 @@ const blankStats = () => ({ played: 0, good: 0, streak: 0, best: 0, times: [] })
 // The launch / fresh-question engine state for a given starting date.
 export const initEngine = (date) => ({
   date, //                          current question {y,m,d,_fmt,_jul}
+  questionId: 0, //                 bumps on every advance / RESET — the hook resets the solve-timer on this, NOT on raw date changes (Back/Forward change date but must not reset the timer)
   persistBtns: {}, //               answer-grid state {idx: 'correct'|'wrong-latest'|'wrong-prev'|'override-wrong'}
   stats: blankStats(), //           {played,good,streak,best,times}
   stack: [], //                     back-history (oldest→newest)
@@ -81,6 +82,7 @@ const advance = (state, { nextDate, useJulian, finalBtns, saved }) => {
     : null
   return {
     ...state,
+    questionId: (state.questionId ?? 0) + 1,
     stack,
     forwardStack: [],
     date: nextDate,
@@ -258,6 +260,7 @@ export function gameReducer(state, action) {
       const regen = !timingOff || state.countedWrong || state.revealed
       return {
         ...initEngine(regen ? nextDate : state.date),
+        questionId: (state.questionId ?? 0) + 1,
       }
     }
 
