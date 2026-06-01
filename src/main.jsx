@@ -13,6 +13,8 @@ import {
 import { MONTH, DAY, fmtYear, fmt, fmtPartial, numericFormatOf } from './lib/format.js'
 import { computeMethodSummary } from './lib/method.js'
 import Expander from './components/Expander.jsx'
+import StatPanel from './components/StatPanel.jsx'
+import { NewBestStar, SectionLabel, Kbd } from './components/primitives.jsx'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -35,16 +37,7 @@ const ReactDOM = { createRoot, createPortal }
     const RESET_BTN_CLASS="px-3 py-2 rounded-xl bg-rose-600/90 text-white text-sm font-medium";
     // Compact Reset Stats button variant (smaller py + col-span fit for stats panel).
     const RESET_STATS_BTN_CLASS="w-full px-3 py-1.5 rounded-xl btn-solid border border-transparent text-sm font-medium";
-    // ★ "new best" star className — appears next to a stat value when a new best was set.
-    const NEW_BEST_STAR_CLASS="text-purple-400 font-bold ml-0.5 text-[8px]";
-    // Settings popover section label className (small uppercase tracking-widest).
-    const SECTION_LABEL_CLASS="text-[10px] uppercase tracking-widest text-purple-300/60";
-    // <kbd> styling used by the keyboard shortcut rows in HtP.
-    const KBD_CLASS="inline-block panel rounded px-1.5 py-0.5 text-[11px] font-mono min-w-[1.5rem] text-center shrink-0";
-    // Tiny presentational components for repeated patterns. Pure visual, no state.
-    const NewBestStar=()=>(<sup className={NEW_BEST_STAR_CLASS}>★</sup>);
-    const SectionLabel=({children,className=""})=>(<div className={`${SECTION_LABEL_CLASS}${className?" "+className:""}`}>{children}</div>);
-    const Kbd=({children})=>(<kbd className={KBD_CLASS}>{children}</kbd>);
+    // Presentational primitives (NewBestStar, SectionLabel, Kbd) + their class consts → src/components/primitives.jsx, imported at top.
     // buttonStateClass — picks the className for an answer-grid button based on its
     // persistent state (correct/wrong-latest/wrong-prev/override-wrong) and any active
     // flash animation. Returns just the state-class portion; the caller composes the
@@ -289,84 +282,9 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-05-31T17:24:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T01:26:00Z');
 
-    function StatPanel({stats,armedSpan}){
-      // For fractional values (Score, Streak as "X/Y"), shrink the value font
-      // when either side reaches 1000+ or 10000+ to prevent overflow on long
-      // sessions. Non-fractional values (Accuracy, Last, Average, Median)
-      // stay at default size — they don't grow this way in practice.
-      //
-      // Bug #4 armedSpan: when present, replaces stats[armedSpan.startIdx..endIdx]
-      // (inclusive) with a single wide "Enable and Reset Stats?" warning button.
-      // Used by the App-side timing-arm flow to merge the 3 time stat boxes into one
-      // confirmation target. Shape: {startIdx, endIdx, label, onClick, btnRef}.
-      const sizeForValue=(val)=>{
-        const s=String(val);
-        if(!s.includes('/'))return"text-sm";
-        const sideMax=Math.max(...s.split('/').map(p=>p.length));
-        if(sideMax>=5)return"text-[10px]";
-        if(sideMax>=4)return"text-xs";
-        return"text-sm";
-      };
-      return(
-        <div className="mt-4 rounded-2xl panel flex overflow-hidden">
-          {(()=>{
-            const items=[];
-            for(let i=0;i<stats.length;i++){
-              if(armedSpan&&i===armedSpan.startIdx){
-                const span=armedSpan.endIdx-armedSpan.startIdx+1;
-                // Bug #4 aesthetic: no ring or rounded corners on the merged warning button.
-                // The text change ('Enable and Reset Stats?') is the sole visual cue. The
-                // standard vertical divider between Streak and this button is already
-                // present (it was the Streak|Last divider in unarmed state) — no element
-                // positions shift between armed and unarmed states.
-                //
-                // Phantom spacers: when the 3 time stat boxes merge into 1 warning button,
-                // 2 internal dividers (Last|Avg and Avg|Med) disappear from the flex row.
-                // Without compensation, those 2px get redistributed across the remaining
-                // flex items, shifting the Streak-right divider 1px right and stretching
-                // every box before it. Two 1px-wide transparent spacers — one before, one
-                // after the button — restore exact unarmed flex math: Streak-right divider
-                // is locked in place and the warning text sits exactly centered between
-                // that divider and the panel's right edge.
-                items.push(<div key="armed-spacer-l" className="w-px shrink-0"/>);
-                items.push(
-                  <button
-                    key="armed-warning"
-                    ref={armedSpan.btnRef}
-                    type="button"
-                    onClick={armedSpan.onClick}
-                    style={{flex:span}}
-                    className="flex items-center justify-center py-2 text-xs font-medium"
-                  >{armedSpan.label}</button>
-                );
-                items.push(<div key="armed-spacer-r" className="w-px shrink-0"/>);
-                if(armedSpan.endIdx<stats.length-1){
-                  items.push(<div key={`d-armed-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
-                }
-                i=armedSpan.endIdx;
-                continue;
-              }
-              const s=stats[i];
-              const Tag=s.fn?"button":"div";
-              const props=s.fn?{type:"button",onClick:s.fn}:{};
-              const sz=sizeForValue(s.value);
-              items.push(
-                <Tag key={s.label} {...props} className="flex-1 flex flex-col items-center py-2 gap-0.5">
-                  <span className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off?" line-through":""}`}>{s.label}</span>
-                  <span className={`${sz} font-semibold tabular-nums leading-tight mt-0.5`}>{s.off?"—":s.value}</span>
-                </Tag>
-              );
-              if(i<stats.length-1){
-                items.push(<div key={`d-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
-              }
-            }
-            return items;
-          })()}
-        </div>
-      );
-    }
+    // StatPanel → src/components/StatPanel.jsx, imported at top.
 
     function CustomSelect({value,onChange,options,className,wrapperClassName,ariaLabel,wrapperRef,showChevron=false,openUp=false}){
       // Custom dropdown that mimics the native iOS picker visually but renders
