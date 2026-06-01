@@ -288,7 +288,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T02:44:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T02:59:00Z');
 
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 
