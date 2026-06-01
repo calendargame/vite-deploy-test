@@ -10,10 +10,7 @@
 // component). This includes classes built via template strings, so we keep the
 // scan broad.
 export default {
-  content: [
-    './index.html',
-    './src/**/*.{js,jsx,ts,tsx}',
-  ],
+  content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   // Theme switching is driven by a [data-theme="..."] attribute on <html> (set by
   // the inline script in index.html), NOT Tailwind's dark: variant — so no
   // darkMode config is needed; the custom CSS handles per-theme overrides.

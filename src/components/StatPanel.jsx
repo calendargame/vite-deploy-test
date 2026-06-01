@@ -12,26 +12,26 @@
 //
 // Extracted from main.jsx in Stage C, Step 4b (verbatim). No app state, no
 // hooks — props in, JSX out.
-export default function StatPanel({stats,armedSpan}){
+export default function StatPanel({ stats, armedSpan }) {
   // For fractional values (Score, Streak as "X/Y"), shrink the value font
   // when either side reaches 1000+ or 10000+ to prevent overflow on long
   // sessions. Non-fractional values (Accuracy, Last, Average, Median)
   // stay at default size — they don't grow this way in practice.
-  const sizeForValue=(val)=>{
-    const s=String(val);
-    if(!s.includes('/'))return"text-sm";
-    const sideMax=Math.max(...s.split('/').map(p=>p.length));
-    if(sideMax>=5)return"text-[10px]";
-    if(sideMax>=4)return"text-xs";
-    return"text-sm";
-  };
-  return(
+  const sizeForValue = (val) => {
+    const s = String(val)
+    if (!s.includes('/')) return 'text-sm'
+    const sideMax = Math.max(...s.split('/').map((p) => p.length))
+    if (sideMax >= 5) return 'text-[10px]'
+    if (sideMax >= 4) return 'text-xs'
+    return 'text-sm'
+  }
+  return (
     <div className="mt-4 rounded-2xl panel flex overflow-hidden">
-      {(()=>{
-        const items=[];
-        for(let i=0;i<stats.length;i++){
-          if(armedSpan&&i===armedSpan.startIdx){
-            const span=armedSpan.endIdx-armedSpan.startIdx+1;
+      {(() => {
+        const items = []
+        for (let i = 0; i < stats.length; i++) {
+          if (armedSpan && i === armedSpan.startIdx) {
+            const span = armedSpan.endIdx - armedSpan.startIdx + 1
             // Bug #4 aesthetic: no ring or rounded corners on the merged warning button.
             // The text change ('Enable and Reset Stats?') is the sole visual cue. The
             // standard vertical divider between Streak and this button is already
@@ -46,40 +46,59 @@ export default function StatPanel({stats,armedSpan}){
             // after the button — restore exact unarmed flex math: Streak-right divider
             // is locked in place and the warning text sits exactly centered between
             // that divider and the panel's right edge.
-            items.push(<div key="armed-spacer-l" className="w-px shrink-0"/>);
+            items.push(<div key="armed-spacer-l" className="w-px shrink-0" />)
             items.push(
               <button
                 key="armed-warning"
                 ref={armedSpan.btnRef}
                 type="button"
                 onClick={armedSpan.onClick}
-                style={{flex:span}}
+                style={{ flex: span }}
                 className="flex items-center justify-center py-2 text-xs font-medium"
-              >{armedSpan.label}</button>
-            );
-            items.push(<div key="armed-spacer-r" className="w-px shrink-0"/>);
-            if(armedSpan.endIdx<stats.length-1){
-              items.push(<div key={`d-armed-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
+              >
+                {armedSpan.label}
+              </button>,
+            )
+            items.push(<div key="armed-spacer-r" className="w-px shrink-0" />)
+            if (armedSpan.endIdx < stats.length - 1) {
+              items.push(
+                <div
+                  key={`d-armed-${i}`}
+                  className="w-px h-8 self-center bg-purple-500/20 shrink-0"
+                />,
+              )
             }
-            i=armedSpan.endIdx;
-            continue;
+            i = armedSpan.endIdx
+            continue
           }
-          const s=stats[i];
-          const Tag=s.fn?"button":"div";
-          const props=s.fn?{type:"button",onClick:s.fn}:{};
-          const sz=sizeForValue(s.value);
+          const s = stats[i]
+          const Tag = s.fn ? 'button' : 'div'
+          const props = s.fn ? { type: 'button', onClick: s.fn } : {}
+          const sz = sizeForValue(s.value)
           items.push(
-            <Tag key={s.label} {...props} className="flex-1 flex flex-col items-center py-2 gap-0.5">
-              <span className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off?" strike-center":""}`}>{s.label}</span>
-              <span className={`${sz} font-semibold tabular-nums leading-tight mt-0.5`}>{s.off?"—":s.value}</span>
-            </Tag>
-          );
-          if(i<stats.length-1){
-            items.push(<div key={`d-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0"/>);
+            <Tag
+              key={s.label}
+              {...props}
+              className="flex-1 flex flex-col items-center py-2 gap-0.5"
+            >
+              <span
+                className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off ? ' strike-center' : ''}`}
+              >
+                {s.label}
+              </span>
+              <span className={`${sz} font-semibold tabular-nums leading-tight mt-0.5`}>
+                {s.off ? '—' : s.value}
+              </span>
+            </Tag>,
+          )
+          if (i < stats.length - 1) {
+            items.push(
+              <div key={`d-${i}`} className="w-px h-8 self-center bg-purple-500/20 shrink-0" />,
+            )
           }
         }
-        return items;
+        return items
       })()}
     </div>
-  );
+  )
 }

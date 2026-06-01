@@ -21,21 +21,146 @@ import { DAY } from './format.js'
 // Values >3 are written as their negative equivalent (mod 7): 4→-3, 5→-2, 6→-1.
 // Calculation is unaffected since results mod 7 at the end. Display values match
 // what users learn from the book.
-export const METHOD_MONTH_CODES={1:-1,2:2,3:2,4:-2,5:0,6:3,7:-2,8:1,9:-3,10:-1,11:2,12:-3};
-export const METHOD_AB_ADVANCED_MAP={even:new Map([[0,0],[1,-2],[2,3],[3,1],[4,0],[5,-2],[6,3],[7,1],[8,0],[9,-2]]),odd:new Map([[0,3],[1,1],[2,0],[3,-2],[4,3],[5,1],[6,0],[7,-2],[8,3],[9,1]])};
-export const METHOD_CD_ADVANCED_LEAP_MAP=new Map([[0,0],[4,-2],[8,3],[12,1],[16,-1],[20,-3],[24,2],[28,0],[32,-2],[36,3],[40,1],[44,-1],[48,-3],[52,2],[56,0],[60,-2],[64,3],[68,1],[72,-1],[76,-3],[80,2],[84,0],[88,-2],[92,3],[96,1]]);
+export const METHOD_MONTH_CODES = {
+  1: -1,
+  2: 2,
+  3: 2,
+  4: -2,
+  5: 0,
+  6: 3,
+  7: -2,
+  8: 1,
+  9: -3,
+  10: -1,
+  11: 2,
+  12: -3,
+}
+export const METHOD_AB_ADVANCED_MAP = {
+  even: new Map([
+    [0, 0],
+    [1, -2],
+    [2, 3],
+    [3, 1],
+    [4, 0],
+    [5, -2],
+    [6, 3],
+    [7, 1],
+    [8, 0],
+    [9, -2],
+  ]),
+  odd: new Map([
+    [0, 3],
+    [1, 1],
+    [2, 0],
+    [3, -2],
+    [4, 3],
+    [5, 1],
+    [6, 0],
+    [7, -2],
+    [8, 3],
+    [9, 1],
+  ]),
+}
+export const METHOD_CD_ADVANCED_LEAP_MAP = new Map([
+  [0, 0],
+  [4, -2],
+  [8, 3],
+  [12, 1],
+  [16, -1],
+  [20, -3],
+  [24, 2],
+  [28, 0],
+  [32, -2],
+  [36, 3],
+  [40, 1],
+  [44, -1],
+  [48, -3],
+  [52, 2],
+  [56, 0],
+  [60, -2],
+  [64, 3],
+  [68, 1],
+  [72, -1],
+  [76, -3],
+  [80, 2],
+  [84, 0],
+  [88, -2],
+  [92, 3],
+  [96, 1],
+])
 // ORDER is derived from MAP.keys() so the two stay in lockstep — single source of truth.
-export const METHOD_CD_ADVANCED_LEAP_ORDER=[...METHOD_CD_ADVANCED_LEAP_MAP.keys()];
-export const METHOD_CD_ADVANCED_ZERO_YEARS=new Set([0,6,17,23,28,34,45,51,56,62,73,79,84,90]);
-export const JULIAN_AB_MAP=new Map([[0,-2],[1,-3],[2,3],[3,2],[4,1],[5,0],[6,-1],[7,-2],[8,-3],[9,3],[10,2],[11,1],[12,0],[13,-1],[14,-2],[15,-3]]);
-export const normalizeMod7=v=>((v%7)+7)%7;
-export const canonicalizeMod=v=>{const m=normalizeMod7(v);return m>3?m-7:m;};
-export function calcDayCode(d){const lo=Math.floor(d/7)*7,hi=lo+7,fl=d-lo,fu=d-hi;return Math.abs(fu)<=Math.abs(fl)?fu:fl;}
-export function calcCdCode(cd){if(METHOD_CD_ADVANCED_ZERO_YEARS.has(cd))return 0;let b=METHOD_CD_ADVANCED_LEAP_ORDER[0];for(const y of METHOD_CD_ADVANCED_LEAP_ORDER){if(y>cd)break;b=y;}return canonicalizeMod((METHOD_CD_ADVANCED_LEAP_MAP.get(b)??0)+(cd-b));}
-export function yearParts(y){const f=((y%10000)+10000)%10000;return{a:Math.floor(f/1000),b:Math.floor((f%1000)/100),cd:f%100};}
+export const METHOD_CD_ADVANCED_LEAP_ORDER = [...METHOD_CD_ADVANCED_LEAP_MAP.keys()]
+export const METHOD_CD_ADVANCED_ZERO_YEARS = new Set([
+  0, 6, 17, 23, 28, 34, 45, 51, 56, 62, 73, 79, 84, 90,
+])
+export const JULIAN_AB_MAP = new Map([
+  [0, -2],
+  [1, -3],
+  [2, 3],
+  [3, 2],
+  [4, 1],
+  [5, 0],
+  [6, -1],
+  [7, -2],
+  [8, -3],
+  [9, 3],
+  [10, 2],
+  [11, 1],
+  [12, 0],
+  [13, -1],
+  [14, -2],
+  [15, -3],
+])
+export const normalizeMod7 = (v) => ((v % 7) + 7) % 7
+export const canonicalizeMod = (v) => {
+  const m = normalizeMod7(v)
+  return m > 3 ? m - 7 : m
+}
+export function calcDayCode(d) {
+  const lo = Math.floor(d / 7) * 7,
+    hi = lo + 7,
+    fl = d - lo,
+    fu = d - hi
+  return Math.abs(fu) <= Math.abs(fl) ? fu : fl
+}
+export function calcCdCode(cd) {
+  if (METHOD_CD_ADVANCED_ZERO_YEARS.has(cd)) return 0
+  let b = METHOD_CD_ADVANCED_LEAP_ORDER[0]
+  for (const y of METHOD_CD_ADVANCED_LEAP_ORDER) {
+    if (y > cd) break
+    b = y
+  }
+  return canonicalizeMod((METHOD_CD_ADVANCED_LEAP_MAP.get(b) ?? 0) + (cd - b))
+}
+export function yearParts(y) {
+  const f = ((y % 10000) + 10000) % 10000
+  return { a: Math.floor(f / 1000), b: Math.floor((f % 1000) / 100), cd: f % 100 }
+}
 // leapCode is the calculation contribution for leap correction (matches the
 // framing of the other numeric codes in the codes panel): -1 only when it's
 // a leap year AND month is January or February (where the leap correction
 // applies in the day-of-week calculation), 0 otherwise. leapYear boolean is
 // kept in the return object too in case future code needs the underlying state.
-export function computeMethodSummary({y,m,d},useJulian=false){if(!Number.isFinite(y)||y<=0)return null;const mc=METHOD_MONTH_CODES[m]??null;if(mc==null)return null;const p=yearParts(y);const julian=useJulian&&isJulianDate(y,m,d);const abCode=julian?(JULIAN_AB_MAP.get(p.a*10+p.b)??0):((p.a%2===0?METHOD_AB_ADVANCED_MAP.even:METHOD_AB_ADVANCED_MAP.odd).get(p.b)??0);const leapYear=julian?isLeapJulian(y):isLeap(y);const leapCode=(leapYear&&(m===1||m===2))?-1:0;const weekday=DAY[julian?wdayJulian(y,m,d):wday(y,m,d)];return{monthCode:mc,dayCode:calcDayCode(d),abCode,cdCode:calcCdCode(p.cd),leapYear,leapCode,weekday,calendarSystem:julian?'Julian':'Gregorian'};}
+export function computeMethodSummary({ y, m, d }, useJulian = false) {
+  if (!Number.isFinite(y) || y <= 0) return null
+  const mc = METHOD_MONTH_CODES[m] ?? null
+  if (mc == null) return null
+  const p = yearParts(y)
+  const julian = useJulian && isJulianDate(y, m, d)
+  const abCode = julian
+    ? (JULIAN_AB_MAP.get(p.a * 10 + p.b) ?? 0)
+    : ((p.a % 2 === 0 ? METHOD_AB_ADVANCED_MAP.even : METHOD_AB_ADVANCED_MAP.odd).get(p.b) ?? 0)
+  const leapYear = julian ? isLeapJulian(y) : isLeap(y)
+  const leapCode = leapYear && (m === 1 || m === 2) ? -1 : 0
+  const weekday = DAY[julian ? wdayJulian(y, m, d) : wday(y, m, d)]
+  return {
+    monthCode: mc,
+    dayCode: calcDayCode(d),
+    abCode,
+    cdCode: calcCdCode(p.cd),
+    leapYear,
+    leapCode,
+    weekday,
+    calendarSystem: julian ? 'Julian' : 'Gregorian',
+  }
+}

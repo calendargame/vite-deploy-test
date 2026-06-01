@@ -12,53 +12,72 @@ import { useRef, useLayoutEffect } from 'react'
 //
 // Extracted from main.jsx in Stage C, Step 4a (verbatim; only the React-hook
 // imports were added, since this is now its own module).
-export default function Expander({open,children}){
-  const outerRef=useRef(null);
-  const innerRef=useRef(null);
-  const prevOpenRef=useRef(open);
-  const mountedRef=useRef(false);
-  const resizeObsRef=useRef(null);
-  useLayoutEffect(()=>{
-    const el=outerRef.current;if(!el)return;
-    const attachObs=()=>{
-      if(typeof ResizeObserver==="undefined"||!innerRef.current||!outerRef.current)return;
+export default function Expander({ open, children }) {
+  const outerRef = useRef(null)
+  const innerRef = useRef(null)
+  const prevOpenRef = useRef(open)
+  const mountedRef = useRef(false)
+  const resizeObsRef = useRef(null)
+  useLayoutEffect(() => {
+    const el = outerRef.current
+    if (!el) return
+    const attachObs = () => {
+      if (typeof ResizeObserver === 'undefined' || !innerRef.current || !outerRef.current) return
       // Disconnect any prior observer before creating a new one. Currently the effect cleanup
       // handles disconnection between effect runs, so this guard only matters if a future change
       // calls attachObs twice within a single effect run (which would otherwise orphan the first).
-      if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}
-      const obs=new ResizeObserver(()=>{
-        if(!outerRef.current||!innerRef.current)return;
-        outerRef.current.style.maxHeight=(innerRef.current.scrollHeight+16)+"px";
-      });
-      obs.observe(innerRef.current);
-      resizeObsRef.current=obs;
-    };
-    if(!mountedRef.current){
-      mountedRef.current=true;
-      prevOpenRef.current=open;
-      if(open){
-        el.style.transition='none';
-        el.style.maxHeight=(innerRef.current?.scrollHeight??0)+16+"px";
-        el.getBoundingClientRect();
-        el.style.transition='';
-        attachObs();
-      }else{
-        el.style.maxHeight="0px";
+      if (resizeObsRef.current) {
+        resizeObsRef.current.disconnect()
+        resizeObsRef.current = null
       }
-      return()=>{if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}};
+      const obs = new ResizeObserver(() => {
+        if (!outerRef.current || !innerRef.current) return
+        outerRef.current.style.maxHeight = innerRef.current.scrollHeight + 16 + 'px'
+      })
+      obs.observe(innerRef.current)
+      resizeObsRef.current = obs
     }
-    const wasOpen=prevOpenRef.current;prevOpenRef.current=open;
-    if(open){
-      el.style.maxHeight=(innerRef.current?.scrollHeight??0)+16+"px";
-      attachObs();
-    }else if(!wasOpen){
-      el.style.maxHeight="0px";
-    }else{
-      el.style.maxHeight=el.scrollHeight+"px";
-      el.getBoundingClientRect();
-      el.style.maxHeight="0px";
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      prevOpenRef.current = open
+      if (open) {
+        el.style.transition = 'none'
+        el.style.maxHeight = (innerRef.current?.scrollHeight ?? 0) + 16 + 'px'
+        el.getBoundingClientRect()
+        el.style.transition = ''
+        attachObs()
+      } else {
+        el.style.maxHeight = '0px'
+      }
+      return () => {
+        if (resizeObsRef.current) {
+          resizeObsRef.current.disconnect()
+          resizeObsRef.current = null
+        }
+      }
     }
-    return()=>{if(resizeObsRef.current){resizeObsRef.current.disconnect();resizeObsRef.current=null;}};
-  },[open]);
-  return(<div ref={outerRef} className="expander"><div ref={innerRef}>{children}</div></div>);
+    const wasOpen = prevOpenRef.current
+    prevOpenRef.current = open
+    if (open) {
+      el.style.maxHeight = (innerRef.current?.scrollHeight ?? 0) + 16 + 'px'
+      attachObs()
+    } else if (!wasOpen) {
+      el.style.maxHeight = '0px'
+    } else {
+      el.style.maxHeight = el.scrollHeight + 'px'
+      el.getBoundingClientRect()
+      el.style.maxHeight = '0px'
+    }
+    return () => {
+      if (resizeObsRef.current) {
+        resizeObsRef.current.disconnect()
+        resizeObsRef.current = null
+      }
+    }
+  }, [open])
+  return (
+    <div ref={outerRef} className="expander">
+      <div ref={innerRef}>{children}</div>
+    </div>
+  )
 }

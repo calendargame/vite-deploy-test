@@ -8,4 +8,4 @@
 //
 // Extracted from main.jsx in Stage C, Step 4f/4g (it became a cross-module
 // shared value once the codes panel moved to its own file).
-export const CODES_CLOSE_MS=310; // frozen-date unfreeze delay; >= CSS .expander close (.28s) + small buffer
+export const CODES_CLOSE_MS = 310 // frozen-date unfreeze delay; >= CSS .expander close (.28s) + small buffer

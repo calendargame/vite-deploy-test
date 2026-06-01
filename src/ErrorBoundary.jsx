@@ -37,7 +37,9 @@ export default class ErrorBoundary extends Component {
         }}
       >
         <div style={{ maxWidth: 420 }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }} aria-hidden="true">😵</div>
+          <div style={{ fontSize: 40, marginBottom: 12 }} aria-hidden="true">
+            😵
+          </div>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 8px' }}>Something went wrong</h1>
           <p style={{ fontSize: 14, opacity: 0.8, margin: '0 0 20px', lineHeight: 1.5 }}>
             The app hit an unexpected error. Reloading usually fixes it.

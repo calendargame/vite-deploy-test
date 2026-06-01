@@ -1,0 +1,26 @@
+# Build output
+dist
+
+# Dependencies
+node_modules
+
+# The 3,700-line App in main.jsx is dense hand-written code, intentionally NOT
+# auto-formatted yet: reformatting it now would bury its history in a giant diff
+# and churn the exact tangled code the mode-untangle is about to rewrite. It gets
+# formatted naturally as it's split into clean per-mode files. The already-clean
+# extracted modules (src/lib, src/components, src/store) ARE formatted.
+src/main.jsx
+
+# Generated / vendored
+package-lock.json
+
+# Hand-tuned / non-JS files we don't want Prettier churning:
+# - index.css: dense, deliberately-compact theme CSS (5 palettes on single lines)
+#   + the layout architecture; reflowing it hurts readability. Kept hand-formatted.
+# - index.html: small, stable shell.
+# - deploy.yml: CI workflow, managed by hand.
+# Prettier's scope is the JS/JSX app modules (src/lib, src/components, src/store),
+# where consistent auto-formatting is the actual win.
+src/index.css
+index.html
+.github/

@@ -8,14 +8,13 @@ import ErrorBoundary from './ErrorBoundary'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import {
-  toAstro, isLeap, isLeapJulian, dim, jdnGregorian, wday,
-  jdnJulian, wdayJulian, isJulianDate, isGapDate, rangeHasLeapYear,
+  isLeap, isLeapJulian, wday,
+  wdayJulian, isJulianDate, isGapDate, rangeHasLeapYear,
 } from './lib/calendar.js'
-import { MONTH, DAY, fmtYear, fmt, fmtPartial, numericFormatOf } from './lib/format.js'
-import { computeMethodSummary } from './lib/method.js'
+import { DAY, fmtYear, fmt, fmtPartial, numericFormatOf } from './lib/format.js'
 import Expander from './components/Expander.jsx'
 import StatPanel from './components/StatPanel.jsx'
-import { NewBestStar, SectionLabel, Kbd } from './components/primitives.jsx'
+import { NewBestStar, SectionLabel } from './components/primitives.jsx'
 import CustomSelect from './components/CustomSelect.jsx'
 import GuidePage from './components/GuidePage.jsx'
 import LookupCard from './components/LookupCard.jsx'
@@ -289,7 +288,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T03:27:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T03:44:00Z');
 
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 

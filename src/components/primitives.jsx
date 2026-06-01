@@ -12,12 +12,15 @@
 // main.jsx — they belong to the answer-grid / reset-flow code, a separate concern.)
 
 // ★ "new best" star className — appears next to a stat value when a new best was set.
-const NEW_BEST_STAR_CLASS="text-purple-400 font-bold ml-0.5 text-[8px]";
+const NEW_BEST_STAR_CLASS = 'text-purple-400 font-bold ml-0.5 text-[8px]'
 // Settings popover section label className (small uppercase tracking-widest).
-const SECTION_LABEL_CLASS="text-[10px] uppercase tracking-widest text-purple-300/60";
+const SECTION_LABEL_CLASS = 'text-[10px] uppercase tracking-widest text-purple-300/60'
 // <kbd> styling used by the keyboard shortcut rows in HtP.
-const KBD_CLASS="inline-block panel rounded px-1.5 py-0.5 text-[11px] font-mono min-w-[1.5rem] text-center shrink-0";
+const KBD_CLASS =
+  'inline-block panel rounded px-1.5 py-0.5 text-[11px] font-mono min-w-[1.5rem] text-center shrink-0'
 
-export const NewBestStar=()=>(<sup className={NEW_BEST_STAR_CLASS}>★</sup>);
-export const SectionLabel=({children,className=""})=>(<div className={`${SECTION_LABEL_CLASS}${className?" "+className:""}`}>{children}</div>);
-export const Kbd=({children})=>(<kbd className={KBD_CLASS}>{children}</kbd>);
+export const NewBestStar = () => <sup className={NEW_BEST_STAR_CLASS}>★</sup>
+export const SectionLabel = ({ children, className = '' }) => (
+  <div className={`${SECTION_LABEL_CLASS}${className ? ' ' + className : ''}`}>{children}</div>
+)
+export const Kbd = ({ children }) => <kbd className={KBD_CLASS}>{children}</kbd>

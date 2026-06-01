@@ -76,8 +76,7 @@ export const useSettings = create(
       name: 'cg-settings-v1', // localStorage key (versioned for future migrations)
       version: 1,
       // Persist only the data values, never the setter functions.
-      partialize: (state) =>
-        Object.fromEntries(PERSISTED_KEYS.map((k) => [k, state[k]])),
+      partialize: (state) => Object.fromEntries(PERSISTED_KEYS.map((k) => [k, state[k]])),
     },
   ),
 )
