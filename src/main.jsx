@@ -23,6 +23,7 @@ import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
 import { computeStreaks } from './engine/streak.js'
 import { computeHasCredit, markBtns, mkBtnsWithCorrect, entryWithGreen } from './engine/answerButtons.js'
+import { useGameEngine } from './engine/useGameEngine.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -763,12 +764,132 @@ const ReactDOM = { createRoot, createPortal }
     }
 
     // ============================================================
-    // App — the top-level component for all non-AoX modes
+    // ClassicMode — the Classic game mode, on the shared engine (mode-untangle Step 1c).
+    //
+    // Self-contained + always-mounted (display:none when inactive), exactly like AoxMode:
+    // it owns ALL of Classic's state via useGameEngine (the pure reducer) plus its own
+    // display toggles (timing/scoring hide, the timing-desync two-tap) and the transient
+    // button flash. App no longer renders Classic inline — it just mounts <ClassicMode/>
+    // and passes the settings down (like it does for AoxMode). This is the first mode
+    // carved out of App's fused rendering; Flash/Blitz/Deduction follow onto the same engine.
+    // ============================================================
+    function ClassicMode({visible,genDate,minY,maxY,useJulian,saveStats,dateFormat,randomFormat,leapChance,janFebChance,julianChance,fmtDate,onFreshChange}){
+      const [timingOff,setTimingOff]=useState(true);   // Classic launches with timing hidden
+      const [scoringOff,setScoringOff]=useState(false);
+      const [timingArmed,setTimingArmed]=useState(false);
+      const timingArmedRef=useRef(false);
+      const timingArmTimerRef=useRef(null);
+      const timingArmBtnRef=useRef(null);
+      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff});
+      const {state,correct,overrideAvail}=eng;
+      const S=state.stats;
+      const sLast=calcLast(S.times),sAvg=calcAvg(S.times),sMed=calcMed(S.times);
+      // Button flash (green/red pulse) is transient UI, not engine state — kept here, same
+      // latest-timeout pattern as App/AoxMode so rapid answers each get the full duration.
+      const [flash,setFlash]=useState(null);
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const optionsDisabled=state.locked||state.calcOpen||state.calcPenaltyActive;
+      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive;
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
+      const idleBtn="surface-button";
+
+      const toggleScoringOff=()=>{if(!saveStats)return;setScoringOff(v=>!v);};
+      // Turn timing OFF → just hide. Turn ON with no desync → regen the (unburned) live date
+      // (performTimingOn). Turn ON with a desync (good !== times recorded) → two-tap confirm,
+      // then a full reset (fullReset). Mirrors App's toggleTimingOff exactly.
+      const toggleTimingOff=()=>{
+        if(!saveStats)return;
+        if(!timingOff){setTimingOff(true);return;}
+        const desync=S.good!==S.times.length;
+        if(!desync){eng.regenDate();setTimingOff(false);return;}
+        if(timingArmedRef.current){if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}timingArmedRef.current=false;setTimingArmed(false);eng.fullReset();setTimingOff(false);return;}
+        timingArmedRef.current=true;setTimingArmed(true);
+        if(timingArmTimerRef.current)clearTimeout(timingArmTimerRef.current);
+        timingArmTimerRef.current=setTimeout(()=>{timingArmedRef.current=false;setTimingArmed(false);timingArmTimerRef.current=null;},3000);
+      };
+      const disarmTimingArm=()=>{if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}timingArmedRef.current=false;setTimingArmed(false);};
+      const onAnswer=i=>{setFlashWithTimeout({type:i===correct?"good":"bad",idx:i});eng.answer(i);};
+      // Override Path 3 (override-after-wrong) flashes green on the correct button, matching App.
+      const onOverride=()=>{if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});eng.override();};
+
+      // regenDecisionFor (App's popover effect, Classic slice): a format / leap / Jan-Feb /
+      // Julian-chance / year-range change regens an UNANSWERED live date; a useJulian toggle
+      // keeps it (live useJulian flows through to the answer + codes). REGEN_DATE no-ops on a
+      // burned or browsed date, so we just fire it on the relevant changes.
+      const prevPopRef=useRef({randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY});
+      useEffect(()=>{
+        const p=prevPopRef.current;
+        const changed=p.randomFormat!==randomFormat||p.dateFormat!==dateFormat||p.leapChance!==leapChance||p.janFebChance!==janFebChance||p.julianChance!==julianChance||p.minY!==minY||p.maxY!==maxY;
+        prevPopRef.current={randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY};
+        if(changed)eng.regenDate();
+        // `eng` is in deps so the rule is satisfied; the body is a cheap guarded compare and
+        // regenDate only fires when a setting actually changed (prevPopRef), so no render loop.
+      },[randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,eng]);
+      // Timing-arm disarm: click outside the warning button (deferred a tick so the arming
+      // click can't disarm itself), and on hide / Save-Stats-off. Mirrors App.
+      useEffect(()=>{if(!timingArmed)return;const h=e=>{if(timingArmBtnRef.current&&timingArmBtnRef.current.contains(e.target))return;disarmTimingArm();};const t=setTimeout(()=>document.addEventListener('click',h),0);return()=>{clearTimeout(t);document.removeEventListener('click',h);};},[timingArmed]);
+      useEffect(()=>{if(!visible&&timingArmedRef.current)disarmTimingArm();},[visible]);
+      useEffect(()=>{if(!saveStats&&timingArmedRef.current)disarmTimingArm();},[saveStats]);
+
+      // Freshness — true iff every ClassicMode field is at its launch default (the date is
+      // random, so excluded, exactly like AoxMode). Reported up via onFreshChange so App's
+      // isFullyReset (Full Reset dim/lock) accounts for Classic's now-self-owned state.
+      const classicIsFresh=state.stats.played===0&&state.stats.good===0&&state.stats.streak===0&&state.stats.best===0&&state.stats.times.length===0&&state.stack.length===0&&state.forwardStack.length===0&&state.backDepth===0&&state.locked===false&&state.revealed===false&&state.countedWrong===false&&state.canOverrideCorrect===false&&state.pendingWrongOverride===null&&state.overrideUsedThisQ===false&&state.calcOpen===false&&state.calcPenaltyActive===false&&timingOff===true&&scoringOff===false&&timingArmed===false&&flash===null;
+      useEffect(()=>{onFreshChange&&onFreshChange(classicIsFresh);},[classicIsFresh,onFreshChange]);
+
+      const sOff=scoringOff||!saveStats;
+      const tOff=timingOff||!saveStats;
+      const sFn=saveStats?toggleScoringOff:null;
+      const tFn=saveStats?toggleTimingOff:null;
+      const statsArr=[
+        {label:"Score",value:`${S.good}/${S.played}`,off:sOff,fn:sFn},
+        {label:"Accuracy",value:fmtAccuracyPct(S.good,S.played),off:sOff,fn:sFn},
+        {label:"Streak",value:`${S.streak}/${S.best}`,off:sOff,fn:sFn},
+        {label:"Last",value:truncTime(sLast),off:tOff,fn:tFn},
+        {label:"Average",value:fmtTime(sAvg),off:tOff,fn:tFn},
+        {label:"Median",value:fmtTime(sMed),off:tOff,fn:tFn},
+      ];
+      const armedSpan=(timingArmed&&saveStats)?{startIdx:3,endIdx:5,label:"Enable and Reset Stats?",onClick:toggleTimingOff,btnRef:timingArmBtnRef}:null;
+      const date=state.date;
+      return(
+        <div style={{display:visible?"block":"none"}}>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan}/></div>
+          <div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={eng.resetStats}>Reset Stats</button></div>
+          <div className="mt-5">
+            <div className="mt-4 rounded-2xl panel p-4">
+              <div className="text-center relative">
+                {state.backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{state.stack.length+1}</span>}
+                <div className="text-3xl font-bold">{fmtDate(date.y,date.m,date.d,date._fmt)}</div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
+                {DAY.map((n,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=state.persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={n} type="button" onClick={()=>{if(perLocked)return;onAnswer(i);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{n}</button>);})}
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+              <div className="grid grid-cols-4 gap-2">
+                <button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>eng.doNew()}>New</button>
+                <div className="col-span-1 flex gap-1">
+                  <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${state.stack.length===0?"opacity-60 pointer-events-none":""}`} onClick={eng.back}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                  <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${state.forwardStack.length===0?"opacity-60 pointer-events-none":""}`} onClick={eng.forward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                </div>
+                <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={eng.reveal}>Reveal</button>
+                <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
+              </div>
+              <MethodBreakdownSection date={date} open={state.calcOpen} onOpenChange={open=>eng.showCodes(open)} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // App — the top-level component for the remaining fused modes
     //
     // Manages mode switching, per-mode preserved state (dateByMode, calcOpenByMode,
-    // preservedByModeRef, stacksByModeRef, timerDoneSnapRef), stats tracking,
-    // and all game-mode rendering (Classic/Blitz/Flash/Deduction/Lookup/How to Play).
-    // AoX has its own component (AoxMode) due to its distinct run-based lifecycle.
+    // preservedByModeRef, stacksByModeRef, timerDoneSnapRef), stats tracking, and the
+    // still-fused rendering (Blitz/Flash/Deduction/Lookup/How to Play). Classic + AoX are
+    // their own self-contained components (ClassicMode on the shared engine, AoxMode).
     // ============================================================
     function App(){
       const [mode,setMode]=useState("classic");
@@ -2510,7 +2631,7 @@ const ReactDOM = { createRoot, createPortal }
       },[mode,timerDone,perQ,allowMistakes,blitzSec,qSec,randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian]);
       const applyCalcPenalty=()=>{setCalcPenalty(true);const roundOver=(mode==="blitz")&&!active;const fp=!countedWrong&&!revealed;if(fp&&!roundOver){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good};updateStats(c=>{c.played+=1;c.streak=0;});if(mode==="blitz"&&!perQ)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));}/* When back-browsing, skip markCorrect: history entries already have the correct day stamped via entryWithGreen using the date's original _jul snapshot. Re-stamping with live `correct` (which uses live useJulian) would add a second green if the live calendar setting differs from the snapshot. */if(backDepth===0){if(mode==="deduction"&&ded){markCorrect(getDedCorrectIdx());}else if(mode!=="deduction")markCorrect(correct);}if(isTimer(mode)&&active){setActive(false);setShowTimerDate(true);if(mode==="blitz"&&!perQ){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setTimerDone(true);}if(mode==="blitz"&&perQ){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setTimerDone(true);}if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;}}if(!revealed)setRevealed(true);if(!countedWrong){setCountedWrong(true);setCanOverrideCorrect(false);}};
       const handleCalcOpenChange=next=>{if(next&&!(locked&&!revealed&&backDepth>0))applyCalcPenalty();setCalcOpen(next);};
-      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox";
+      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox"&&mode!=="classic";
       const sAvg=calcAvg(S.times),sLast=calcLast(S.times),sMed=calcMed(S.times);
       // Date format / randomFormat / leapChance / janFebChance / julianChance now from the
       // settings store (bound at top of App). Semantics unchanged:
@@ -2967,6 +3088,9 @@ const ReactDOM = { createRoot, createPortal }
       // Initialized to true (matches fresh-mount reality); AoxMode's useEffect calls
       // onFreshChange on every freshness flip so this stays in sync.
       const [aoxIsFresh,setAoxIsFresh]=useState(true);
+      // classicIsFresh — reported up from ClassicMode (its state is self-owned now), same as
+      // aoxIsFresh. Used by isFullyReset so the Full Reset button reflects Classic's activity.
+      const [classicIsFresh,setClassicIsFresh]=useState(true);
       // AoxMode is always-mounted-with-display-none (rather than conditionally rendered) so its
       // internal state persists across mode switches — that's intentional UX (a paused AoX
       // run survives a detour into Classic). But it means none of AoxMode's ~25 useStates and
@@ -2975,6 +3099,9 @@ const ReactDOM = { createRoot, createPortal }
       // initializers fresh. Normal mode switching doesn't change this key, so the cross-mode
       // persistence behavior is preserved everywhere except the explicit Full Reset path.
       const [aoxResetKey,setAoxResetKey]=useState(0);
+      // Same remount trigger for ClassicMode (also always-mounted, owns its own engine state):
+      // Full Reset bumps this so Classic returns to its launch state.
+      const [classicResetKey,setClassicResetKey]=useState(0);
       // Scroll-state tracking for the settings popover inner scroll wrapper.
       // Popover inner scroll state. Three flags drive the visual edge indicators:
       //   popoverScrolledFromTop → top fade (no shadow at top — no fixed UI there)
@@ -3172,6 +3299,7 @@ const ReactDOM = { createRoot, createPortal }
         // bestRef, persistBtns, all the run-progress refs, etc.) resets to defaults. This is
         // batched with the other setStates so the remount happens in the same render cycle.
         setAoxResetKey(k=>k+1);
+        setClassicResetKey(k=>k+1);
         // 4. DOM bar refs — visual snap-back so the bars don't show a partially-drained state
         //    until the next render writes them.
         if(blitzBarRef.current)blitzBarRef.current.style.width="100%";
@@ -3332,7 +3460,7 @@ const ReactDOM = { createRoot, createPortal }
       //     freshness) and dedStack (answered rounds), both of which ARE checked.
       //     (Earlier this required ded===null, which kept Full Reset bright after
       //     merely visiting Deduction once — that was the bug this exclusion fixes.)
-      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh;
+      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh&&classicIsFresh;
       // Safety net (moved here from above so its dep array reads isFullyReset AFTER it's declared):
       // if state somehow flips to fully-reset while the Full Reset button is armed (shouldn't be
       // reachable in practice — fullReset disarms before firing — but defensive), disarm.
@@ -3531,9 +3659,10 @@ const ReactDOM = { createRoot, createPortal }
               state would otherwise persist across resets. See aoxResetKey declaration upstream
               for full rationale. */}
           <AoxMode key={aoxResetKey} minY={minY} maxY={maxY} visible={mode==="aox"} fmtDate={fmtDate} useJulian={useJulian} genDate={genDate} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} randomFormat={randomFormat} dateFormat={dateFormat} saveStats={saveStats} onFreshChange={setAoxIsFresh}/>
+          <ClassicMode key={"classic-"+classicResetKey} visible={mode==="classic"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setClassicIsFresh}/>
           {mode==="lookup"&&(<div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div>)}
           {mode==="guide"&&(<div className="mt-2.5"><GuidePage/></div>)}
-          {["classic","blitz","flash"].includes(mode)&&(
+          {["blitz","flash"].includes(mode)&&(
             <div className="mt-5">
               {mode==="blitz"&&!perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={blitzTimeRef}>{fmtBlitzT(blitzSec)}</span></div><div className="bar"><span ref={blitzBarRef} style={{width:"100%"}}></span></div></div>)}
               {mode==="blitz"&&perQ&&(<div className="mb-3"><div className="text-center text-xs tabular-nums text-purple-200/80 mb-1"><span ref={suddenTimeRef}>{qSec}s</span></div><div className="bar"><span ref={suddenBarRef} style={{width:"100%"}}></span></div></div>)}
