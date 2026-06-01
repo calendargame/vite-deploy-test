@@ -1,3 +1,4 @@
+import './index.css' // Tailwind (v3, compiled in-build) + the app's custom CSS — replaces the old Play-CDN <script> + inline <style>.
 import * as React from 'react'
 import ErrorBoundary from './ErrorBoundary'
 // The original loaded the full ReactDOM UMD global, which exposes BOTH createRoot and
@@ -288,7 +289,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T02:59:00Z');
+    const DEPLOY_TS=new Date('2026-06-01T03:09:00Z');
 
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 
