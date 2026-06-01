@@ -65,6 +65,25 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   const back = () => dispatch({ type: 'BACK' })
   const forward = () => dispatch({ type: 'FORWARD', useJulian })
   const resetStats = () => dispatch({ type: 'RESET', timingOff, nextDate: newDate() })
+  // Regenerate the live date in place (timing/Save-Stats enable, or a date-setting change).
+  const regenDate = () => dispatch({ type: 'REGEN_DATE', nextDate: newDate() })
+  // Full reset of stats + history + the live question (timing-enable when a desync exists).
+  const fullReset = () => dispatch({ type: 'RESET', timingOff: false, nextDate: newDate() })
 
-  return { state, correct, overrideAvail, retroOverrideEligible, answer, reveal, showCodes, doNew, override, back, forward, resetStats }
+  return {
+    state,
+    correct,
+    overrideAvail,
+    retroOverrideEligible,
+    answer,
+    reveal,
+    showCodes,
+    doNew,
+    override,
+    back,
+    forward,
+    resetStats,
+    regenDate,
+    fullReset,
+  }
 }

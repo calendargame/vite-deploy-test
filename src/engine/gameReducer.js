@@ -264,6 +264,19 @@ export function gameReducer(state, action) {
       }
     }
 
+    // ── REGEN_DATE ───────────────────────────────────────────────────────────────
+    // Swap the live date in place — no history push, no stat change. Used by
+    // performTimingOn (enabling timing/Save Stats) and by regenDecisionFor (a format /
+    // leap / year-range setting change). A BURNED date (wrong/Reveal/Show Codes) is kept
+    // — you haven't used it yet only when it's fresh — and a browsed entry (backDepth>0)
+    // is never regenerated. Bumps questionId so the solve-timer restarts (matches
+    // performTimingOn setting tStartRef).
+    case 'REGEN_DATE': {
+      const { nextDate } = action
+      if (state.countedWrong || state.revealed || state.backDepth > 0) return state
+      return { ...state, date: nextDate, questionId: (state.questionId ?? 0) + 1 }
+    }
+
     // ── OVERRIDE ───────────────────────────────────────────────────────────────
     // The 5-path override (App's most complex function), Classic scope. Only ever
     // dispatched when overrideAvail (Save Stats on + a path armed + not used this Q), so

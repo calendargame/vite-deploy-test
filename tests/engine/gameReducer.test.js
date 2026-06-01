@@ -244,3 +244,26 @@ describe('gameReducer — BACK / FORWARD', () => {
     expect(back(s)).toBe(s)
   })
 })
+
+describe('gameReducer — REGEN_DATE', () => {
+  const regen = (s) => gameReducer(s, { type: 'REGEN_DATE', nextDate: NEXT })
+
+  it('swaps a fresh live date in place (no history push, no stat change)', () => {
+    const s = regen(initEngine(DATE))
+    expect(s.date).toBe(NEXT)
+    expect(s.stack).toEqual([])
+    expect(s.stats).toEqual({ played: 0, good: 0, streak: 0, best: 0, times: [] })
+    expect(s.questionId).toBe(1) // bumped → solve-timer restarts
+  })
+
+  it('keeps a burned date (wrong / Reveal / Show Codes)', () => {
+    const burned = answer(initEngine(DATE), W) // countedWrong, still on DATE
+    expect(regen(burned).date).toBe(DATE)
+  })
+
+  it('never regenerates while browsing history', () => {
+    let s = answer(initEngine(DATE), C) // advance → stack has the prior Q
+    s = back(s) // backDepth > 0
+    expect(regen(s).date).toBe(s.date) // unchanged
+  })
+})
