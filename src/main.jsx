@@ -255,6 +255,233 @@ const ReactDOM = { createRoot, createPortal }
 
     const DEPLOY_TS=new Date('2026-06-01T03:56:00Z');
 
+    // ============================================================
+    // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
+    //
+    // Returns a fresh puzzle {type,y,m,d,w,options,boxes?,_fmt,_jul,…} for the given sub-mode +
+    // year range, or null when a Year puzzle can't be built for the range (caller keeps the
+    // previous puzzle — App's "retain rather than show a degenerate puzzle"). This is App's old
+    // spawnDedWithRange body, lifted out so DeductionMode's shared-engine genDate can produce
+    // puzzles; App's spawnDedWithRange now delegates here (one source of truth). The side effects
+    // the old version had inline (setCalcPenalty, tStartRef) are the caller's concern now — the
+    // engine owns the per-question reset + solve timer. aw/dimFn are the local calendar helpers
+    // (mirrors App's activeWday/dimFn, keyed off the passed useJulian). The dead `pc` local of
+    // the original is dropped (it was never read). Generation logic is otherwise verbatim.
+    // ============================================================
+    function makeDedPuzzle(type,lo,hi,{useJulian,leapChance,janFebChance,randomFormat,dateFormat,abCrossOnly,julCrossOnly,monthOnly1582}){
+      const aw=(y,m,d)=>(useJulian&&isJulianDate(y,m,d))?wdayJulian(y,m,d):wday(y,m,d);
+      const dimFn=(y,m)=>{const leap=(useJulian&&isJulianDate(y,m,1))?isLeapJulian(y):isLeap(y);return m===2?(leap?29:28):([4,6,9,11].includes(m)?30:31);};
+      // Decide leap preference once per question (not per attempt) so probabilities don't skew.
+      const r=Math.random();
+      let wantLeap=null;
+      if(leapChance==='100')wantLeap=true;
+      else if(leapChance==='75')wantLeap=r<0.75;
+      else if(leapChance==='50')wantLeap=r<0.5;
+      // Roll a separate random for Jan/Feb biasing (Option A semantics). Decide once per question.
+      const rjf=Math.random();
+      let wantJanFeb=null;
+      if(janFebChance==='100')wantJanFeb=true;
+      else if(janFebChance==='75')wantJanFeb=rjf<0.75;
+      else if(janFebChance==='50')wantJanFeb=rjf<0.5;
+      else if(janFebChance==='25')wantJanFeb=rjf<0.25;
+      const isLeapForY=yc=>{const jul=useJulian&&isJulianDate(yc,1,1);return jul?isLeapJulian(yc):isLeap(yc);};
+      const pickMonth=isLeapY=>{
+        if(wantJanFeb===null||!isLeapY)return rint(1,12);
+        return wantJanFeb?rint(1,2):rint(3,12);
+      };
+      const attachFmt=o=>{o._fmt=randomFormat?rollFormat():dateFormat;o._jul=useJulian;return o;};
+      if(type==="year"){
+        const windowCrossesJulianBoundary=(a,b,m,d)=>{
+          if(!useJulian)return false;
+          if(a>b)return false;
+          const aIsJul=isJulianDate(a,m,d),bIsJul=isJulianDate(b,m,d);
+          return aIsJul!==bIsJul;
+        };
+        const julianBoundaryPair=(m,d)=>{
+          if(m===10&&d>=5&&d<=14)return null; // gap day
+          if(m<10||(m===10&&d<=4))return[1582,1583];
+          return[1581,1582];
+        };
+        const windowCrossesAb=(a,b)=>Math.floor(a/100)!==Math.floor(b/100);
+        const validateDistinct=(years,m,d)=>{
+          const wdays=[];
+          for(const y of years){
+            if(m===2&&d===29&&!isLeapForY(y))continue; // dead option, skip
+            if(d>dimFn(y,m))return false;
+            if(isGapDate(y,m,d))return false;
+            wdays.push(aw(y,m,d));
+          }
+          return new Set(wdays).size===wdays.length;
+        };
+        const inRange=y=>y!==0&&y>=Math.max(1,lo)&&y<=hi;
+        const julCrossPossible=julCrossOnly&&useJulian&&inRange(1582)&&(inRange(1581)||inRange(1583));
+        const abCrossPossible=abCrossOnly&&Math.floor(Math.max(1,lo)/100)!==Math.floor(hi/100);
+        let enforce=null;
+        if(abCrossPossible&&julCrossPossible)enforce=Math.random()<0.5?'ab':'jul';
+        else if(abCrossPossible)enforce='ab';
+        else if(julCrossPossible)enforce='jul';
+        const trySpawn=()=>{
+          for(let attempt=0;attempt<3000;attempt++){
+            let yc=rint(Math.max(1,lo),hi);
+            if(yc===0)continue;
+            const isLeapY=isLeapForY(yc);
+            if(wantLeap!==null&&wantLeap!==isLeapY)continue;
+            const m=pickMonth(isLeapY);
+            const D=dimFn(yc,m);
+            if(D<=0)continue;
+            let d=rint(1,D);
+            if(isGapDate(yc,m,d))continue;
+            let target,windowYears;
+            if(enforce==='jul'){
+              const pair=julianBoundaryPair(m,d);
+              if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
+              if(m===2&&d===29){
+                const leaps=pair.filter(y=>isLeapForY(y));
+                if(leaps.length===0)continue;
+                yc=leaps[rint(0,leaps.length-1)];
+              }else{
+                if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
+                yc=pair[rint(0,1)];
+              }
+              target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
+            }else if(enforce==='ab'){
+              const P=rint(0,YEAR_OPTION_DEFAULT-1);
+              const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
+              if(!inRange(start)||!inRange(end))continue;
+              if(start<=0&&end>=0)continue;
+              if(!windowCrossesAb(start,end))continue;
+              if(windowCrossesJulianBoundary(start,end,m,d))continue;
+              windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
+              if(m===2&&d===29){
+                const leaps=windowYears.filter(y=>isLeapForY(y));
+                if(leaps.length===0)continue;
+                yc=leaps[rint(0,leaps.length-1)];
+              }
+              target=YEAR_OPTION_DEFAULT;
+            }else{
+              const P=rint(0,YEAR_OPTION_DEFAULT-1);
+              const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
+              if(!inRange(start)||!inRange(end))continue;
+              if(start<=0&&end>=0)continue;
+              if(windowCrossesJulianBoundary(start,end,m,d)){
+                const pair=julianBoundaryPair(m,d);
+                if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
+                if(m===2&&d===29){
+                  const leaps=pair.filter(y=>isLeapForY(y));
+                  if(leaps.length===0)continue;
+                  yc=leaps[rint(0,leaps.length-1)];
+                }else{
+                  if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
+                  yc=pair[rint(0,1)];
+                }
+                target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
+              }else{
+                windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
+                if(m===2&&d===29){
+                  const leaps=windowYears.filter(y=>isLeapForY(y));
+                  if(leaps.length===0)continue;
+                  yc=leaps[rint(0,leaps.length-1)];
+                }
+                target=YEAR_OPTION_DEFAULT;
+              }
+            }
+            if(!validateDistinct(windowYears,m,d))continue;
+            const w=aw(yc,m,d);
+            return attachFmt({type:"year",y:yc,m,d,w,options:windowYears,_abx:abCrossOnly,_julx:julCrossOnly});
+          }
+          return null;
+        };
+        // No fallback: the Year sub-mode playability contract (yearSubPossible) keeps this from
+        // being called for an unbuildable range in normal play. null → caller retains the prior
+        // puzzle (App) or supplies an init fallback (DeductionMode's hidden, unreachable Year engine).
+        return trySpawn();
+      }
+      if(type==="month"){
+        const force1582=monthOnly1582&&useJulian&&1582>=lo&&1582<=hi;
+        let yc=null;
+        if(force1582){
+          yc=1582;
+        }else{
+          for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
+          if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
+        }
+        const isLeapY=isLeapForY(yc);
+        const is1582Special=yc===1582&&useJulian;
+        if(is1582Special){
+          const dCat=(()=>{const rr=Math.random();
+            if(rr<4/31)return'pre';      // ~13% → days 1-4
+            if(rr<14/31)return'gap';     // ~32% → days 5-14 (October excluded from box layout)
+            return'post';                // ~55% → days 15-31
+          })();
+          const boxes=dCat==='pre'?MONTH_BOXES_1582_PRE:dCat==='gap'?MONTH_BOXES_1582_GAP:MONTH_BOXES_1582_POST;
+          let pickFromBoxes=boxes;
+          if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+          else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+          const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
+          let m;
+          if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+          else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+          else m=box.months[rint(0,box.months.length-1)];
+          let d;
+          if(m===10){
+            if(dCat==='pre')d=rint(1,4);
+            else d=rint(15,31); // dCat='post' (gap is impossible here per box layout)
+          }else{
+            const D=dimFn(yc,m);
+            if(dCat==='pre')d=rint(1,Math.min(4,D));
+            else if(dCat==='gap')d=rint(5,Math.min(14,D));
+            else d=rint(15,D);
+          }
+          const w=aw(yc,m,d);
+          return attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582});
+        }
+        const boxes=isLeapY?MONTH_BOXES_LEAP:MONTH_BOXES_COMMON;
+        let pickFromBoxes=boxes;
+        if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+        else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
+        const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
+        let m;
+        if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+        else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
+        else m=box.months[rint(0,box.months.length-1)];
+        const D=dimFn(yc,m),d=rint(1,D),w=aw(yc,m,d);
+        return attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582});
+      }
+      if(type==="day"){
+        let yc=null;
+        for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
+        if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
+        const isLeapY=isLeapForY(yc);
+        const m=pickMonth(isLeapY),D=dimFn(yc,m);
+        const isOct1582Special=yc===1582&&m===10&&useJulian;
+        if(isOct1582Special){
+          const useLeft=Math.random()<4/21;
+          if(useLeft){
+            const d=rint(1,4);
+            const w=aw(yc,m,d);
+            return attachFmt({type:"day",y:yc,m,w,d,options:[1,2,3,4]});
+          }else{
+            const span=DAY_OPTION_COUNT;
+            const P=rint(0,span-1);
+            const dLo=15+P,dHi=25+P;
+            const d=rint(dLo,dHi);
+            const start=d-P;
+            const w=aw(yc,m,d);
+            const opts=[];for(let v=start;v<start+span;v++)opts.push(v);
+            return attachFmt({type:"day",y:yc,m,w,d,options:opts});
+          }
+        }
+        const span=Math.min(DAY_OPTION_COUNT,D);
+        const P=rint(0,span-1);
+        const dLo=P+1,dHi=D-(span-1)+P;
+        const d=rint(dLo,dHi),w=aw(yc,m,d);
+        const start=d-P,end=start+span-1;
+        const opts=[];for(let v=start;v<=end;v++)opts.push(v);
+        return attachFmt({type:"day",y:yc,m,w,d,options:opts});
+      }
+      return null;
+    }
+
     // StatPanel → src/components/StatPanel.jsx, imported at top.
 
     // CustomSelect → src/components/CustomSelect.jsx, imported at top.
@@ -1236,13 +1463,209 @@ const ReactDOM = { createRoot, createPortal }
     }
 
     // ============================================================
+    // DeductionMode — the Deduction game mode on the shared engine (mode-untangle Step 4).
+    //
+    // Self-contained + always-mounted like ClassicMode/FlashMode/BlitzMode. Deduction has THREE
+    // independent sub-modes (Day/Month/Year), each with its OWN stats + history silo — modeled as
+    // THREE useGameEngine instances; `dedType` selects which is shown while the other two persist
+    // (exactly the per-silo behavior App had via statsByMode['deduction-*'] + dedStack[type]).
+    // The "correct" answer is a puzzle OPTION INDEX, not a weekday — the shared reducer handles
+    // that uniformly via correctIndexOf (puzzle entries carry `type`). Puzzles come from the pure
+    // makeDedPuzzle (module scope), passed as each engine's genDate. Chrome (stats strip /
+    // scoring+timing toggles / freshness / settings-regen) mirrors ClassicMode and gets folded
+    // into a shared shell in Step 6, once all modes' variations are known.
+    // ============================================================
+    function DeductionMode({visible,minY,maxY,useJulian,saveStats,dateFormat,randomFormat,leapChance,janFebChance,julianChance,onFreshChange}){
+      const [dedType,setDedType]=useState("day");
+      const [abCrossOnly,setAbCrossOnly]=useState(false);
+      const [julCrossOnly,setJulCrossOnly]=useState(false);
+      const [monthOnly1582,setMonthOnly1582]=useState(false);
+      const [timingOff,setTimingOff]=useState(true);   // Deduction launches with timing hidden (like Classic)
+      const [scoringOff,setScoringOff]=useState(false);
+      const [timingArmed,setTimingArmed]=useState(false);
+      const timingArmedRef=useRef(false);
+      const timingArmTimerRef=useRef(null);
+      const timingArmBtnRef=useRef(null);
+
+      // Per-sub-mode puzzle generators — close over the latest settings + toggles each render.
+      const opts={useJulian,leapChance,janFebChance,randomFormat,dateFormat,abCrossOnly,julCrossOnly,monthOnly1582};
+      // Year init can fail when the range can't build a distinct-window puzzle (yearSubPossible
+      // false). Supply a minimal valid fallback so the (hidden, unreachable) Year engine stays
+      // well-formed — it's never displayed in that state (the Year button is disabled).
+      const yearFallback=lo=>{const y=Math.max(1,lo);const w=(useJulian&&isJulianDate(y,1,1))?wdayJulian(y,1,1):wday(y,1,1);return{type:"year",y,m:1,d:1,w,options:[y],_fmt:randomFormat?rollFormat():dateFormat,_jul:useJulian,_abx:abCrossOnly,_julx:julCrossOnly};};
+      const genDay=(lo,hi)=>makeDedPuzzle("day",lo,hi,opts);
+      const genMonth=(lo,hi)=>makeDedPuzzle("month",lo,hi,opts);
+      const genYear=(lo,hi)=>makeDedPuzzle("year",lo,hi,opts)||yearFallback(lo);
+
+      const dayEng=useGameEngine({genDate:genDay,minY,maxY,useJulian,saveStats,timingOff});
+      const monthEng=useGameEngine({genDate:genMonth,minY,maxY,useJulian,saveStats,timingOff});
+      const yearEng=useGameEngine({genDate:genYear,minY,maxY,useJulian,saveStats,timingOff});
+      const eng=dedType==="month"?monthEng:dedType==="year"?yearEng:dayEng;
+      const {state,correct,overrideAvail}=eng;
+      const S=state.stats;
+      const sLast=calcLast(S.times),sAvg=calcAvg(S.times),sMed=calcMed(S.times);
+
+      // Flash (green/red pulse) on the active grid — component-owned UI (like ClassicMode). Only
+      // one grid is visible at a time, so a single flash state suffices (no per-sub-mode `kind`).
+      const [flash,setFlash]=useState(null);
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+
+      const fmtDatePartial=(y,m,d,storedFmt,missing)=>fmtPartial(y,m,d,storedFmt||dateFormat,missing);
+      const centerLastOpt=(index,total)=>{if(total<=0)return"";if(index===total-1&&total%3===1)return"col-span-3";return"";};
+      // Can the range support a Year puzzle? (mirrors App's yearSubPossible exactly.)
+      const yearSubPossible=(()=>{const lo=Math.max(1,minY),hi=maxY;if(hi-lo+1>=5)return true;if(!useJulian)return false;const has1581=lo<=1581&&hi>=1581,has1582=lo<=1582&&hi>=1582,has1583=lo<=1583&&hi>=1583;return(has1582&&has1583)||(has1581&&has1582);})();
+
+      const optionsDisabled=state.locked||state.calcOpen||state.calcPenaltyActive;
+      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive;
+      const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
+      const idleBtn="surface-button";
+
+      const changeDedType=t=>{if(t===dedType)return;setFlash(null);setDedType(t);};   // each silo persists; just swap which shows
+      const onAnswer=i=>{setFlashWithTimeout({type:i===correct?"good":"bad",idx:i});eng.answer(i);};
+      // Override-after-wrong flashes green on the correct option, matching App's dedFlash branch.
+      const onOverride=()=>{if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});eng.override();};
+
+      const toggleScoringOff=()=>{if(!saveStats)return;setScoringOff(v=>!v);};
+      // Timing toggle — identical contract to ClassicMode (OFF→hide; ON no-desync→regen; ON with
+      // a desync→two-tap confirm then full reset). Operates on the ACTIVE sub-mode's engine.
+      const toggleTimingOff=()=>{
+        if(!saveStats)return;
+        if(!timingOff){setTimingOff(true);return;}
+        const desync=S.good!==S.times.length;
+        if(!desync){eng.regenDate();setTimingOff(false);return;}
+        if(timingArmedRef.current){if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}timingArmedRef.current=false;setTimingArmed(false);eng.fullReset();setTimingOff(false);return;}
+        timingArmedRef.current=true;setTimingArmed(true);
+        if(timingArmTimerRef.current)clearTimeout(timingArmTimerRef.current);
+        timingArmTimerRef.current=setTimeout(()=>{timingArmedRef.current=false;setTimingArmed(false);timingArmTimerRef.current=null;},3000);
+      };
+      const disarmTimingArm=()=>{if(timingArmTimerRef.current){clearTimeout(timingArmTimerRef.current);timingArmTimerRef.current=null;}timingArmedRef.current=false;setTimingArmed(false);};
+
+      // Auto-switch out of Year when a range/Julian change makes it unbuildable (mirrors App).
+      useEffect(()=>{if(dedType==="year"&&!yearSubPossible)setDedType("day");},[dedType,yearSubPossible]);
+      // Auto-clear toggles when their prerequisites break (mirrors App's popover effect).
+      useEffect(()=>{if(!useJulian){if(julCrossOnly)setJulCrossOnly(false);if(monthOnly1582)setMonthOnly1582(false);}},[useJulian,julCrossOnly,monthOnly1582]);
+      useEffect(()=>{
+        if(julCrossOnly&&(1581<minY||1583>maxY))setJulCrossOnly(false);
+        if(monthOnly1582&&(1582<minY||1582>maxY))setMonthOnly1582(false);
+        if(abCrossOnly&&Math.floor(Math.max(1,minY)/100)===Math.floor(maxY/100))setAbCrossOnly(false);
+      },[minY,maxY,abCrossOnly,julCrossOnly,monthOnly1582]);
+
+      // Settings-change regen: regen ALL three engines' live puzzle (each no-ops on a burned or
+      // browsed date), matching App's "regen the current + cleanse FRESH non-current" on a
+      // format / random-format / leap / Jan-Feb / Julian-chance / range / calendar change.
+      const prevPopRef=useRef({randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian});
+      useEffect(()=>{
+        const p=prevPopRef.current;
+        const changed=p.randomFormat!==randomFormat||p.dateFormat!==dateFormat||p.leapChance!==leapChance||p.janFebChance!==janFebChance||p.julianChance!==julianChance||p.minY!==minY||p.maxY!==maxY||p.useJulian!==useJulian;
+        prevPopRef.current={randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian};
+        if(changed){dayEng.regenDate();monthEng.regenDate();yearEng.regenDate();}
+      },[randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian,dayEng,monthEng,yearEng]);
+      // Toggle-change regen: a relevant Deduction toggle regens the ACTIVE engine's puzzle (the
+      // toggles only render in their own sub-mode, so the active engine is always the right one).
+      const prevTogRef=useRef({abCrossOnly,julCrossOnly,monthOnly1582});
+      useEffect(()=>{
+        const p=prevTogRef.current;
+        const changed=p.abCrossOnly!==abCrossOnly||p.julCrossOnly!==julCrossOnly||p.monthOnly1582!==monthOnly1582;
+        prevTogRef.current={abCrossOnly,julCrossOnly,monthOnly1582};
+        if(changed)eng.regenDate();
+      },[abCrossOnly,julCrossOnly,monthOnly1582,eng]);
+
+      // Timing-arm disarm listeners (mirror ClassicMode): click outside the warning button, or on
+      // hide / Save-Stats-off.
+      useEffect(()=>{if(!timingArmed)return;const h=e=>{if(timingArmBtnRef.current&&timingArmBtnRef.current.contains(e.target))return;disarmTimingArm();};const t=setTimeout(()=>document.addEventListener('click',h),0);return()=>{clearTimeout(t);document.removeEventListener('click',h);};},[timingArmed]);
+      useEffect(()=>{if(!visible&&timingArmedRef.current)disarmTimingArm();},[visible]);
+      useEffect(()=>{if(!saveStats&&timingArmedRef.current)disarmTimingArm();},[saveStats]);
+
+      // Freshness — true iff all three silos + toggles + UI are at launch default (dates are
+      // random, so excluded). Reported up so App's isFullyReset accounts for Deduction.
+      const engFresh=e=>e.state.stats.played===0&&e.state.stats.good===0&&e.state.stats.streak===0&&e.state.stats.best===0&&e.state.stats.times.length===0&&e.state.stack.length===0&&e.state.forwardStack.length===0&&e.state.backDepth===0&&e.state.locked===false&&e.state.revealed===false&&e.state.countedWrong===false&&e.state.canOverrideCorrect===false&&e.state.pendingWrongOverride===null&&e.state.overrideUsedThisQ===false&&e.state.calcOpen===false&&e.state.calcPenaltyActive===false;
+      const deductionIsFresh=engFresh(dayEng)&&engFresh(monthEng)&&engFresh(yearEng)&&dedType==="day"&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&timingOff===true&&scoringOff===false&&timingArmed===false&&flash===null;
+      useEffect(()=>{onFreshChange&&onFreshChange(deductionIsFresh);},[deductionIsFresh,onFreshChange]);
+
+      const sOff=scoringOff||!saveStats;
+      const tOff=timingOff||!saveStats;
+      const sFn=saveStats?toggleScoringOff:null;
+      const tFn=saveStats?toggleTimingOff:null;
+      const statsArr=[
+        {label:"Score",value:`${S.good}/${S.played}`,off:sOff,fn:sFn},
+        {label:"Accuracy",value:fmtAccuracyPct(S.good,S.played),off:sOff,fn:sFn},
+        {label:"Streak",value:`${S.streak}/${S.best}`,off:sOff,fn:sFn},
+        {label:"Last",value:truncTime(sLast),off:tOff,fn:tFn},
+        {label:"Average",value:fmtTime(sAvg),off:tOff,fn:tFn},
+        {label:"Median",value:fmtTime(sMed),off:tOff,fn:tFn},
+      ];
+      const armedSpan=(timingArmed&&saveStats)?{startIdx:3,endIdx:5,label:"Enable and Reset Stats?",onClick:toggleTimingOff,btnRef:timingArmBtnRef}:null;
+      const date=state.date;
+      // Codes-panel target mirrors App's deduction calcTarget: just the date fields (so
+      // displayedFormat falls to the current dateFormat) + the puzzle's _jul snapshot.
+      const calcTarget=date?{y:date.y,m:date.m,d:date.d,_jul:date._jul}:null;
+      // cellDates for the Month 1582 codes panel (answer box groups months from both calendars).
+      let cellDates=null;
+      if(date&&date.type==="month"&&date.y===1582&&date.boxes){
+        const box=correct>=0?date.boxes[correct]:null;
+        if(box&&Array.isArray(box.months)&&box.months.length>=2)cellDates=box.months.map(m=>({y:date.y,m,d:date.d}));
+      }
+      // Toggle enable conditions (mirror App's render gating).
+      const abPossible=Math.floor(Math.max(1,minY)/100)!==Math.floor(maxY/100);
+      const has1581=1581>=minY&&1581<=maxY,has1582=1582>=minY&&1582<=maxY,has1583=1583>=minY&&1583<=maxY;
+      const julPossible=useJulian&&has1582&&(has1581||has1583);
+      const m1582Possible=useJulian&&1582>=minY&&1582<=maxY;
+
+      return(
+        <div style={{display:visible?"block":"none"}}>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan}/></div>
+          <div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={eng.resetStats}>Reset Stats</button></div>
+          <div className="mt-5">
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
+              <div className="flex justify-start">
+                {dedType==="year"&&(()=>{const disabled=!abPossible;const active=abCrossOnly&&!disabled;return(<button type="button" onClick={()=>{if(disabled)return;setAbCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}><i>ab</i> Cross</button>);})()}
+              </div>
+              <div className="flex gap-2 items-center">
+                {["day","month","year"].map(t=>{const disabled=t==="year"&&!yearSubPossible;return(<button key={t} type="button" onClick={()=>{if(disabled)return;changeDedType(t);}} className={`px-2 py-1.5 rounded-xl text-sm font-medium border min-w-16 ${dedType===t?"btn-solid border-transparent text-white":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>{t[0].toUpperCase()+t.slice(1)}</button>);})}
+              </div>
+              <div className="flex justify-end">
+                {dedType==="year"&&(()=>{const disabled=!julPossible;const active=julCrossOnly&&!disabled;return(<button type="button" onClick={()=>{if(disabled)return;setJulCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>Jul Cross</button>);})()}
+                {dedType==="month"&&(()=>{const disabled=!m1582Possible;const active=monthOnly1582&&!disabled;return(<button type="button" onClick={()=>{if(disabled)return;setMonthOnly1582(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>1582 Only</button>);})()}
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl panel p-4">
+              <div className="text-center relative">
+                {state.backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{state.stack.length+1}</span>}
+                <div className="text-3xl font-bold">{date?fmtDatePartial(date.y,date.m,date.d,date._fmt,date.type):"—"}</div>
+                {date&&<div className="mt-1 text-lg text-purple-100">Weekday: <span className="font-semibold">{DAY[date.w]}</span></div>}
+              </div>
+              <div className="mt-4">
+                {date&&date.type==="year"&&(()=>{const N=date.options.length;const gridCls=N===2?"grid-cols-2":N===5?"grid-cols-6":"grid-cols-3";const colSpanFor=idx=>N===5?(idx<3?"col-span-2":"col-span-3"):"";return(<div className={`grid gap-2 ${gridCls}`} data-answer-grid="true">{date.options.map((y,idx)=>{const ps=state.persistBtns[idx];const isFlashing=!!(flash&&flash.idx===idx);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>{if(perLocked)return;onAnswer(idx);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${colSpanFor(idx)}`}>{fmtYear(y)}</button>);})}</div>);})()}
+                {date&&date.type==="month"&&(<div className="grid grid-cols-2 gap-3" data-answer-grid="true">{date.options.map((mv,idx)=>{const last=idx===date.options.length-1?"col-span-2":"";const ps=state.persistBtns[idx];const isFlashing=!!(flash&&flash.idx===idx);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>{if(perLocked)return;onAnswer(idx);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{mv}</button>);})}</div>)}
+                {date&&date.type==="day"&&(<div className="grid grid-cols-3 gap-2" data-answer-grid="true">{date.options.map((dv,idx)=>{const ps=state.persistBtns[idx];const isFlashing=!!(flash&&flash.idx===idx);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",idleBtn);const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>{if(perLocked)return;onAnswer(idx);if(isTouch)document.activeElement?.blur();}} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${centerLastOpt(idx,date.options.length)}`}>{dv}</button>);})}</div>)}
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl panel p-3 space-y-3">
+              <div className="grid grid-cols-4 gap-2">
+                <button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>eng.doNew()}>New</button>
+                <div className="col-span-1 flex gap-1">
+                  <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${state.stack.length===0?"opacity-60 pointer-events-none":""}`} onClick={eng.back}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
+                  <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${state.forwardStack.length===0?"opacity-60 pointer-events-none":""}`} onClick={eng.forward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                </div>
+                <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={eng.reveal}>Reveal</button>
+                <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
+              </div>
+              <MethodBreakdownSection date={calcTarget} open={state.calcOpen} onOpenChange={open=>eng.showCodes(open)} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={calcTarget?._jul??useJulian} displayedFormat={calcTarget?._fmt||dateFormat} cellDates={cellDates}/>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
     // App — the top-level component for the remaining fused modes
     //
     // Manages mode switching, per-mode preserved state (dateByMode, calcOpenByMode,
     // preservedByModeRef, stacksByModeRef, timerDoneSnapRef), stats tracking, and the
-    // still-fused rendering (Deduction/Lookup/How to Play). Classic, Flash, Blitz + AoX are
-    // their own self-contained components (ClassicMode/FlashMode/BlitzMode on the shared
-    // engine, AoxMode).
+    // still-fused rendering (Lookup/How to Play). Classic, Flash, Blitz, Deduction + AoX are
+    // their own self-contained components (ClassicMode/FlashMode/BlitzMode/DeductionMode on the
+    // shared engine, AoxMode).
     // ============================================================
     function App(){
       const [mode,setMode]=useState("classic");
@@ -2314,392 +2737,14 @@ const ReactDOM = { createRoot, createPortal }
         }
       }
       function spawnDed(){spawnDedWithRange(minY,maxY);}
-      // Generates a fresh Deduction puzzle for the current dedType and year range.
-      //
-      // Cross-mode summary of Feb 29 handling (since the rules differ subtly per sub-mode):
-      //   Year: window must contain at least one leap year. yc is forced to one of those leap
-      //         years; non-leap years still display as options but are "dead" — they have no
-      //         Feb 29 so they trivially can't be the answer (they don't break weekday
-      //         distinctness either since validateDistinct skips them).
-      //   Day:  no special handling needed. dimFn returns 28 for non-leap years, so d=29 is
-      //         only ever picked when isLeapY is true.
-      //   Month: no special handling needed. isLeapY determines MONTH_BOXES_LEAP vs _COMMON;
-      //         d is picked within dimFn's range (which already accounts for leap year).
+      // spawnDedWithRange / spawnDed (App copy) are DEAD post-Deduction-migration (Deduction
+      // renders via DeductionMode now) but kept until Step 6 wholesale cleanup of App fused
+      // handlers. Delegates to the shared makeDedPuzzle so there is ONE generator (the old
+      // ~370-line body moved there verbatim). null (Year unbuildable) keeps the prior puzzle.
       function spawnDedWithRange(lo,hi){
         setCalcPenalty(false);tStartRef.current=performance.now();
-        const pc=hi>=1?hi-Math.max(1,lo)+1:0;
-        // Decide leap preference once per question (not per attempt) so probabilities don't skew.
-        const r=Math.random();
-        let wantLeap=null;
-        if(leapChance==='100')wantLeap=true;
-        else if(leapChance==='75')wantLeap=r<0.75;
-        else if(leapChance==='50')wantLeap=r<0.5;
-        // Roll a separate random for Jan/Feb biasing (Option A semantics — see randomDate).
-        // Decide once per question so the probability is exact across questions.
-        const rjf=Math.random();
-        let wantJanFeb=null;
-        if(janFebChance==='100')wantJanFeb=true;
-        else if(janFebChance==='75')wantJanFeb=rjf<0.75;
-        else if(janFebChance==='50')wantJanFeb=rjf<0.5;
-        else if(janFebChance==='25')wantJanFeb=rjf<0.25;
-        const isLeapForY=yc=>{const jul=useJulian&&isJulianDate(yc,1,1);return jul?isLeapJulian(yc):isLeap(yc);};
-        // pickMonth: on leap years, force toward (or away from) Jan/Feb based on the rolled bias.
-        // On non-leap years (or when no bias is active), uniform across all 12 months.
-        const pickMonth=isLeapY=>{
-          if(wantJanFeb===null||!isLeapY)return rint(1,12);
-          return wantJanFeb?rint(1,2):rint(3,12);
-        };
-        // attachFmt stamps cross-cutting "settings snapshot" fields onto a fresh ded object
-        // so each puzzle remembers the settings under which it was generated. These ride
-        // along through stack/forwardStack via spread (...ded) and survive Back/Forward
-        // navigation. Per-mode-toggle fields (_abx, _julx, _m1582) are added by the sub-mode
-        // branches themselves; attachFmt only handles the always-present pair (_fmt, _jul).
-        //   _fmt   — date format snapshot. Always stamped: random roll when randomFormat
-        //            is on, current dateFormat when off. Display layer always trusts _fmt.
-        //            On a Cat A unanswered untouched live puzzle, format setting
-        //            changes can regen the live date (see regenDecisionFor); wrong guesses
-        //            on the live puzzle defer any format regen until the next puzzle.
-        //   _jul   — useJulian snapshot at generation time (used by codes panel + history)
-        //   _abx   — abCrossOnly snapshot (Year sub-mode; informational, not used for replay)
-        //   _julx  — julCrossOnly snapshot (Year sub-mode; informational)
-        //   _m1582 — monthOnly1582 snapshot (Month sub-mode; informational)
-        const attachFmt=o=>{o._fmt=randomFormat?rollFormat():dateFormat;o._jul=useJulian;return o;};
-        if(dedType==="year"){
-          // ----------------------------------------------------------------------
-          // YEAR sub-mode (B/C/G implementation):
-          //
-          //   Window of N consecutive years where each option has a DISTINCT weekday
-          //   for the puzzle's (m, d). User picks yc (the year matching the displayed
-          //   weekday) by the elimination of the other (N-1) years.
-          //
-          //   N defaults to 5 (the universal max for distinct-codes; N=6+ can collide
-          //   in normal Gregorian/Julian windows). Drops to 2 when the window
-          //   straddles Oct 15, 1582 with useJulian on (the +5 calendar-jump shift
-          //   collapses any longer window to duplicates).
-          //
-          //   ab Cross toggle (mode-level): force window to straddle a year ending
-          //   in 00 (any 100-year boundary; both leap and non-leap centuries qualify).
-          //   N stays 5.
-          //
-          //   Jul Cross toggle (mode-level): force window to straddle Oct 15, 1582
-          //   (Julian only). N=2. Auto-disabled when useJulian is OFF or year range
-          //   excludes the boundary years.
-          //
-          //   Both toggles on: 50/50 random per puzzle which constraint applies.
-          //
-          //   Feb 29 (m=2, d=29): only allowed when the window contains at least
-          //   one leap year (Greg or Julian as appropriate). yc is forced to one
-          //   of the leap years in the window; non-leap years still display as
-          //   options (they're "dead" — the puzzle has no Feb 29 in those years
-          //   so they trivially can't be the answer, but they don't break
-          //   distinctness because Feb 29 simply doesn't exist there).
-          // ----------------------------------------------------------------------
-
-          // Helper: does window [a, b] cross Oct 15, 1582 (the Julian/Greg boundary)?
-          // Boundary location depends on (m, d):
-          //   (m, d) before Oct 15 (Jan-Sep + Oct 1-4): boundary is between 1582 and 1583
-          //   (m, d) on/after Oct 15 (Oct 15+ + Nov + Dec): boundary is between 1581 and 1582
-          //   Oct 5-14: gap days, don't exist
-          const windowCrossesJulianBoundary=(a,b,m,d)=>{
-            if(!useJulian)return false;
-            if(a>b)return false;
-            const aIsJul=isJulianDate(a,m,d),bIsJul=isJulianDate(b,m,d);
-            return aIsJul!==bIsJul;
-          };
-          // Helper: which two-year boundary pair straddles 1582 for (m, d)?
-          const julianBoundaryPair=(m,d)=>{
-            if(m===10&&d>=5&&d<=14)return null; // gap day
-            if(m<10||(m===10&&d<=4))return[1582,1583];
-            return[1581,1582];
-          };
-          // Helper: does window [a, b] contain a year ending in 00?
-          // True iff floor(a/100) != floor(b/100).
-          const windowCrossesAb=(a,b)=>Math.floor(a/100)!==Math.floor(b/100);
-          // Helper: validate weekday distinctness for an option list.
-          // For Feb 29: skip non-leap years (they don't have Feb 29; treat as "dead" options).
-          const validateDistinct=(years,m,d)=>{
-            const wdays=[];
-            for(const y of years){
-              if(m===2&&d===29&&!isLeapForY(y))continue; // dead option, skip
-              if(d>dimFn(y,m))return false;
-              if(isGapDate(y,m,d))return false;
-              wdays.push(activeWday(y,m,d));
-            }
-            return new Set(wdays).size===wdays.length;
-          };
-          // Range check: enforce yc != 0 and within [max(1, lo), hi].
-          const inRange=y=>y!==0&&y>=Math.max(1,lo)&&y<=hi;
-          // Decide which crossing to enforce this puzzle (based on toggles).
-          // Note: enforcement may fail if the toggle's prerequisites aren't met (e.g. Jul Cross
-          // with year range that doesn't include 1582). In that case the toggle silently no-ops.
-          // Jul Cross is possible when useJulian is on AND the year range contains 1582 plus at
-          // least one of its neighbors (1581 for Oct15+/Nov/Dec dates, 1583 for Jan-Sep/Oct1-4
-          // dates). When only one neighbor is available, trySpawn retries until it picks an (m,d)
-          // matching the available boundary pair.
-          const julCrossPossible=julCrossOnly&&useJulian&&inRange(1582)&&(inRange(1581)||inRange(1583));
-          // ab Cross possible: range must span at least one 100-year boundary
-          const abCrossPossible=abCrossOnly&&Math.floor(Math.max(1,lo)/100)!==Math.floor(hi/100);
-          // `enforce` is computed ONCE before trySpawn's loop (rather than inside each attempt)
-          // so the 50/50 random choice for "both toggles on" doesn't re-roll on each retry.
-          // Re-rolling per-attempt would skew probabilities away from 50/50 because failed
-          // attempts would re-randomize, causing constraints with lower success rate to be
-          // tried more often than 50% of the time.
-          let enforce=null;
-          if(abCrossPossible&&julCrossPossible)enforce=Math.random()<0.5?'ab':'jul';
-          else if(abCrossPossible)enforce='ab';
-          else if(julCrossPossible)enforce='jul';
-
-          const trySpawn=()=>{
-            for(let attempt=0;attempt<3000;attempt++){
-              // Pick yc, m, d (with leap preference)
-              let yc=rint(Math.max(1,lo),hi);
-              if(yc===0)continue;
-              const isLeapY=isLeapForY(yc);
-              if(wantLeap!==null&&wantLeap!==isLeapY)continue;
-              const m=pickMonth(isLeapY);
-              const D=dimFn(yc,m);
-              if(D<=0)continue;
-              let d=rint(1,D);
-              if(isGapDate(yc,m,d))continue;
-              // Determine target N and window based on enforcement + natural crossing.
-              let target,windowYears;
-              if(enforce==='jul'){
-                // Forced Julian crossing — N=2
-                const pair=julianBoundaryPair(m,d);
-                if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
-                // For Feb 29: pair must contain at least one leap year
-                if(m===2&&d===29){
-                  const leaps=pair.filter(y=>isLeapForY(y));
-                  if(leaps.length===0)continue;
-                  yc=leaps[rint(0,leaps.length-1)];
-                }else{
-                  if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
-                  yc=pair[rint(0,1)];
-                }
-                target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
-              }else if(enforce==='ab'){
-                // Forced ab crossing — N=5, window must contain a year ending in 00
-                const P=rint(0,YEAR_OPTION_DEFAULT-1);
-                const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
-                if(!inRange(start)||!inRange(end))continue;
-                // Skip windows containing year 0 (impossible since year 0 doesn't exist; check defensively)
-                if(start<=0&&end>=0)continue;
-                if(!windowCrossesAb(start,end))continue;
-                // ab Cross is N=5; can't also cross Julian boundary (would need N=2 instead)
-                if(windowCrossesJulianBoundary(start,end,m,d))continue;
-                windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
-                if(m===2&&d===29){
-                  const leaps=windowYears.filter(y=>isLeapForY(y));
-                  if(leaps.length===0)continue;
-                  yc=leaps[rint(0,leaps.length-1)];
-                }
-                target=YEAR_OPTION_DEFAULT;
-              }else{
-                // No enforcement — natural N=5; if window would cross Julian boundary, drop to N=2
-                const P=rint(0,YEAR_OPTION_DEFAULT-1);
-                const start=yc-P,end=start+YEAR_OPTION_DEFAULT-1;
-                if(!inRange(start)||!inRange(end))continue;
-                if(start<=0&&end>=0)continue;
-                if(windowCrossesJulianBoundary(start,end,m,d)){
-                  // Natural Julian crossing — switch to N=2 boundary pair
-                  const pair=julianBoundaryPair(m,d);
-                  if(!pair||!inRange(pair[0])||!inRange(pair[1]))continue;
-                  if(m===2&&d===29){
-                    const leaps=pair.filter(y=>isLeapForY(y));
-                    if(leaps.length===0)continue;
-                    yc=leaps[rint(0,leaps.length-1)];
-                  }else{
-                    if(d>dimFn(pair[0],m)||d>dimFn(pair[1],m))continue;
-                    yc=pair[rint(0,1)];
-                  }
-                  target=YEAR_OPTION_JUL_CROSS;windowYears=pair.slice();
-                }else{
-                  windowYears=[];for(let yy=start;yy<=end;yy++)windowYears.push(yy);
-                  if(m===2&&d===29){
-                    const leaps=windowYears.filter(y=>isLeapForY(y));
-                    if(leaps.length===0)continue;
-                    yc=leaps[rint(0,leaps.length-1)];
-                  }
-                  target=YEAR_OPTION_DEFAULT;
-                }
-              }
-              // Validate distinctness
-              if(!validateDistinct(windowYears,m,d))continue;
-              const w=activeWday(yc,m,d);
-              setDed(attachFmt({type:"year",y:yc,m,d,w,options:windowYears,_abx:abCrossOnly,_julx:julCrossOnly}));
-              return true;
-            }
-            return false;
-          };
-          // No fallback needed: the Year sub-mode playability contract ensures spawnDed is
-          // never called for Year sub-mode when the range can't support a buildable puzzle
-          // (Year button auto-disables, and the popover effect auto-switches to Day if the
-          // user is mid-session in Year when range becomes too narrow). If trySpawn somehow
-          // fails despite that contract, ded retains
-          // its previous value rather than being replaced with a degenerate 1-button puzzle.
-          trySpawn();
-          return;
-        }
-        if(dedType==="month"){
-          // ----------------------------------------------------------------------
-          // MONTH sub-mode (D/G implementation):
-          //
-          //   Standard layout: 7 fixed boxes grouped by shared month code.
-          //   Years ≠ 1582 (or with useJulian off): use MONTH_BOXES_COMMON / _LEAP
-          //   normally — every month in the year shares the same year code, so
-          //   the boxes work regardless of which year is picked.
-          //
-          //   Year = 1582 with useJulian on: special layout because the Julian/
-          //   Gregorian transition splits the year. Jan-Sep + Oct 1-4 use Julian
-          //   (year code +1); Oct 15+ + Nov + Dec use Gregorian (year code -2).
-          //   Box layout depends on which day range applies:
-          //     Days 1-4:  Oct groups with Jan, Nov in {Jan, Oct, Nov}
-          //     Days 5-14: Oct excluded entirely (gap days don't exist)
-          //     Days 15-31: Oct groups with Jun in {Jun, Oct}
-          //
-          //   1582 Only toggle (mode-level): force yc=1582. Auto-disabled when
-          //   useJulian is OFF or year range excludes 1582.
-          //
-          //   1582 included in normal Month play (no exclusion). When randomly
-          //   selected, the 1582-aware layout activates automatically.
-          // ----------------------------------------------------------------------
-
-          // Decide if we're forcing 1582
-          const force1582=monthOnly1582&&useJulian&&1582>=lo&&1582<=hi;
-          let yc=null;
-          if(force1582){
-            yc=1582;
-            // 1582 is not a leap year in either calendar; leap preference is silently ignored
-            // when forcing. (Falls through to non-leap treatment naturally.)
-          }else{
-            // Pick year respecting leap preference
-            for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
-            if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
-          }
-          const isLeapY=isLeapForY(yc);
-          const is1582Special=yc===1582&&useJulian;
-          // For 1582 special: pick d first (excluding gap days), then determine box layout from d.
-          // Otherwise: pick box, pick m, pick d within m's days.
-          if(is1582Special){
-            // 1582 with Julian on: the year splits into Julian (Jan-Sep + Oct1-4) and Gregorian
-            // (Oct15+ + Nov + Dec) halves with different year codes. Box layout depends on which
-            // day-range the puzzle's d falls into:
-            //   dCat='pre'  → days 1-4   → MONTH_BOXES_1582_PRE  (Oct in {Jan,Oct,Nov} sum-0 box)
-            //   dCat='gap'  → days 5-14  → MONTH_BOXES_1582_GAP  (October excluded — gap days don't exist)
-            //   dCat='post' → days 15-31 → MONTH_BOXES_1582_POST (Oct moves to {Jun,Oct} sum-4 box)
-            //
-            // dCat is picked first, weighted by approximate day count per category (4/31, 10/31, 17/31).
-            // Then box + m + d follow the standard pick-box → pick-m → pick-d pattern. October is
-            // automatically excluded from dCat='gap' because MONTH_BOXES_1582_GAP omits it.
-            const dCat=(()=>{const r=Math.random();
-              if(r<4/31)return'pre';      // ~13% → days 1-4
-              if(r<14/31)return'gap';     // ~32% → days 5-14 (October excluded from box layout)
-              return'post';               // ~55% → days 15-31
-            })();
-            const boxes=dCat==='pre'?MONTH_BOXES_1582_PRE:dCat==='gap'?MONTH_BOXES_1582_GAP:MONTH_BOXES_1582_POST;
-            let pickFromBoxes=boxes;
-            // janFebChance is irrelevant for 1582 (not a leap year), but defensively respect it.
-            // Uses the per-question wantJanFeb roll from spawnDedWithRange — true means force
-            // Jan/Feb side, false means force away from Jan/Feb, null means no bias.
-            if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
-            else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
-            const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
-            let m;
-            if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
-            else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
-            else m=box.months[rint(0,box.months.length-1)];
-            // Pick d in m's valid range, restricted by category. For October days 5-14 don't exist,
-            // but we never reach m=10 with dCat='gap' since MONTH_BOXES_1582_GAP excludes October.
-            let d;
-            if(m===10){
-              if(dCat==='pre')d=rint(1,4);
-              else d=rint(15,31); // dCat='post' (gap is impossible here per box layout)
-            }else{
-              const D=dimFn(yc,m);
-              if(dCat==='pre')d=rint(1,Math.min(4,D));
-              else if(dCat==='gap')d=rint(5,Math.min(14,D));
-              else d=rint(15,D);
-            }
-            const w=activeWday(yc,m,d);
-            setDed(attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582}));
-            return;
-          }
-          // Standard (non-1582) path
-          const boxes=isLeapY?MONTH_BOXES_LEAP:MONTH_BOXES_COMMON;
-          let pickFromBoxes=boxes;
-          if(wantJanFeb===true&&isLeapY){const filtered=boxes.filter(b=>b.months.includes(1)||b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
-          else if(wantJanFeb===false&&isLeapY){const filtered=boxes.filter(b=>!b.months.includes(1)&&!b.months.includes(2));if(filtered.length>0)pickFromBoxes=filtered;}
-          const box=pickFromBoxes[rint(0,pickFromBoxes.length-1)];
-          let m;
-          if(wantJanFeb===true&&isLeapY){const allowed=box.months.filter(mm=>mm===1||mm===2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
-          else if(wantJanFeb===false&&isLeapY){const allowed=box.months.filter(mm=>mm!==1&&mm!==2);m=allowed.length>0?allowed[rint(0,allowed.length-1)]:box.months[rint(0,box.months.length-1)];}
-          else m=box.months[rint(0,box.months.length-1)];
-          const D=dimFn(yc,m),d=rint(1,D),w=activeWday(yc,m,d);
-          setDed(attachFmt({type:"month",y:yc,d,w,m,options:boxes.map(b=>b.label),boxes:boxes.map(b=>({...b,months:[...b.months]})),_m1582:monthOnly1582}));
-          return;
-        }
-        if(dedType==="day"){
-          // ----------------------------------------------------------------------
-          // DAY sub-mode (E implementation):
-          //
-          //   N=7 consecutive days as default. Each day code is unique within
-          //   the window (codes cycle 0-6 every 7 days, so any 7 consecutive
-          //   real days have distinct codes).
-          //
-          //   Special case: October 1582 with useJulian on. Days 5-14 don't exist
-          //   (the Gregorian transition skipped them). Valid days are
-          //   {1, 2, 3, 4, 15, 16, ..., 31}. When the window straddles the gap
-          //   (mixes days from the {1-4} side and the {15-31} side), code
-          //   distinctness caps N at 4 (codes for 1,2,3,4 repeat as 1,2,3,4 at
-          //   15,16,17,18 — every 5-window crossing the gap has a duplicate).
-          //
-          //   Window layout in Oct 1582:
-          //     Correct day in {1-4}: window = {1,2,3,4} (only 4 valid days here).
-          //     Correct day in {15-31}: try N=7 within {15-31}; if d is too close
-          //       to the gap edge for a 7-window to fit on the right side, use N=4.
-          //   useJulian off: full 1-31, no gap, normal N=7.
-          // ----------------------------------------------------------------------
-          let yc=null;
-          for(let t=0;t<2000;t++){const c=rint(lo,hi);if(c===0)continue;const il=isLeapForY(c);if(wantLeap!==null&&wantLeap!==il)continue;yc=c;break;}
-          if(yc==null){for(let t=0;t<600;t++){const c=rint(lo,hi);if(c!==0){yc=c;break;}}if(yc==null)yc=lo>0?lo:1;}
-          const isLeapY=isLeapForY(yc);
-          const m=pickMonth(isLeapY),D=dimFn(yc,m);
-          // Special-case Oct 1582 with useJulian on
-          const isOct1582Special=yc===1582&&m===10&&useJulian;
-          if(isOct1582Special){
-            // Two sides: left {1-4} and right {15-31}.
-            // Weight by # valid days: 4 left vs 17 right (total 21).
-            // Within each side, mirror existing day-mode semantics: position uniform, d
-            // distributed by # of valid windows containing d.
-            const useLeft=Math.random()<4/21;
-            if(useLeft){
-              // Left side: window is fixed at {1,2,3,4}, N=4. d uniform → position uniform.
-              const d=rint(1,4);
-              const w=activeWday(yc,m,d);
-              setDed(attachFmt({type:"day",y:yc,m,w,d,options:[1,2,3,4]}));
-            }else{
-              // Right side: N=7 in {15..31}. Position P uniform [0..6], d uniform in [15+P, 25+P].
-              const span=DAY_OPTION_COUNT;
-              const P=rint(0,span-1);
-              const dLo=15+P,dHi=25+P;
-              const d=rint(dLo,dHi);
-              const start=d-P;
-              const w=activeWday(yc,m,d);
-              const opts=[];for(let v=start;v<start+span;v++)opts.push(v);
-              setDed(attachFmt({type:"day",y:yc,m,w,d,options:opts}));
-            }
-            return;
-          }
-          // Standard path (no gap-day awareness needed)
-          const span=Math.min(DAY_OPTION_COUNT,D);
-          const P=rint(0,span-1);
-          const dLo=P+1,dHi=D-(span-1)+P;
-          const d=rint(dLo,dHi),w=activeWday(yc,m,d);
-          const start=d-P,end=start+span-1;
-          const opts=[];for(let v=start;v<=end;v++)opts.push(v);
-          setDed(attachFmt({type:"day",y:yc,m,w,d,options:opts}));
-          return;
-        }
+        const p=makeDedPuzzle(dedType,lo,hi,{useJulian,leapChance,janFebChance,randomFormat,dateFormat,abCrossOnly,julCrossOnly,monthOnly1582});
+        if(p)setDed(p);
       }
       const captureDedSnap=()=>ded?({ded,countedWrong,locked,revealed,calcPenaltyActive}):null;
       function changeDedType(next){if(next===dedType)return;resetPB();const cs=captureDedSnap();const ns=savedDedByType[next]||null;
@@ -2984,7 +3029,10 @@ const ReactDOM = { createRoot, createPortal }
       },[mode,timerDone,perQ,allowMistakes,blitzSec,qSec,randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian]);
       const applyCalcPenalty=()=>{setCalcPenalty(true);const roundOver=(mode==="blitz")&&!active;const fp=!countedWrong&&!revealed;if(fp&&!roundOver){wrongTimeRef.current=tStartRef.current?(performance.now()-tStartRef.current)/1000:null;prevStatsSnapshotRef.current=null;preCalcPenaltySnapshotRef.current={played:S.played,good:S.good,streak:S.streak,best:S.best,timesLen:S.times.length,blitzPlayed:blitzRoundStats.played,blitzGood:blitzRoundStats.good};updateStats(c=>{c.played+=1;c.streak=0;});if(mode==="blitz"&&!perQ)setBlitzRoundStats(p=>({...p,played:p.played+1,streak:0}));}/* When back-browsing, skip markCorrect: history entries already have the correct day stamped via entryWithGreen using the date's original _jul snapshot. Re-stamping with live `correct` (which uses live useJulian) would add a second green if the live calendar setting differs from the snapshot. */if(backDepth===0){if(mode==="deduction"&&ded){markCorrect(getDedCorrectIdx());}else if(mode!=="deduction")markCorrect(correct);}if(isTimer(mode)&&active){setActive(false);setShowTimerDate(true);if(mode==="blitz"&&!perQ){setBlitzRunning(false);blitzStartRef.current=null;blitzPausedAtRef.current=null;blitzPausedAccRef.current=0;setTimerDone(true);}if(mode==="blitz"&&perQ){qDeadlineRef.current=null;qPausedAtRef.current=null;qPausedAccRef.current=0;setTimerDone(true);}if(mode==="flash"){clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;}}if(!revealed)setRevealed(true);if(!countedWrong){setCountedWrong(true);setCanOverrideCorrect(false);}};
       const handleCalcOpenChange=next=>{if(next&&!(locked&&!revealed&&backDepth>0))applyCalcPenalty();setCalcOpen(next);};
-      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox"&&mode!=="classic"&&mode!=="flash"&&mode!=="blitz";
+      // showStats is now always false — every mode renders its own stats strip (the casual modes
+      // via their components, Deduction via DeductionMode). The block it guards is dead, removed
+      // wholesale in Step 6. Kept as a guard (not deleted) to minimize churn this step.
+      const showStats=mode!=="lookup"&&mode!=="guide"&&mode!=="aox"&&mode!=="classic"&&mode!=="flash"&&mode!=="blitz"&&mode!=="deduction";
       const sAvg=calcAvg(S.times),sLast=calcLast(S.times),sMed=calcMed(S.times);
       // Date format / randomFormat / leapChance / janFebChance / julianChance now from the
       // settings store (bound at top of App). Semantics unchanged:
@@ -3446,6 +3494,7 @@ const ReactDOM = { createRoot, createPortal }
       const [classicIsFresh,setClassicIsFresh]=useState(true);
       const [flashIsFresh,setFlashIsFresh]=useState(true); // ditto from FlashMode
       const [blitzIsFresh,setBlitzIsFresh]=useState(true); // ditto from BlitzMode
+      const [deductionIsFresh,setDeductionIsFresh]=useState(true); // ditto from DeductionMode (all 3 silos)
       // AoxMode is always-mounted-with-display-none (rather than conditionally rendered) so its
       // internal state persists across mode switches — that's intentional UX (a paused AoX
       // run survives a detour into Classic). But it means none of AoxMode's ~25 useStates and
@@ -3459,6 +3508,7 @@ const ReactDOM = { createRoot, createPortal }
       const [classicResetKey,setClassicResetKey]=useState(0);
       const [flashResetKey,setFlashResetKey]=useState(0); // ditto for FlashMode
       const [blitzResetKey,setBlitzResetKey]=useState(0); // ditto for BlitzMode
+      const [deductionResetKey,setDeductionResetKey]=useState(0); // ditto for DeductionMode
       // Scroll-state tracking for the settings popover inner scroll wrapper.
       // Popover inner scroll state. Three flags drive the visual edge indicators:
       //   popoverScrolledFromTop → top fade (no shadow at top — no fixed UI there)
@@ -3659,6 +3709,7 @@ const ReactDOM = { createRoot, createPortal }
         setClassicResetKey(k=>k+1);
         setFlashResetKey(k=>k+1);
         setBlitzResetKey(k=>k+1);
+        setDeductionResetKey(k=>k+1);
         // 4. DOM bar refs — visual snap-back so the bars don't show a partially-drained state
         //    until the next render writes them.
         if(blitzBarRef.current)blitzBarRef.current.style.width="100%";
@@ -3819,7 +3870,7 @@ const ReactDOM = { createRoot, createPortal }
       //     freshness) and dedStack (answered rounds), both of which ARE checked.
       //     (Earlier this required ded===null, which kept Full Reset bright after
       //     merely visiting Deduction once — that was the bug this exclusion fixes.)
-      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh&&classicIsFresh&&flashIsFresh&&blitzIsFresh;
+      const isFullyReset=mode==='classic'&&settingsAtDefaults&&allowMistakes===true&&perQ===false&&blitzSec===60&&qSec===5&&flashMs===500&&abCrossOnly===false&&julCrossOnly===false&&monthOnly1582===false&&dedType==='day'&&!Object.values(scoringOffByMode).some(Boolean)&&timingOffByMode.classic===true&&timingOffByMode.deduction===true&&Object.entries(timingOffByMode).every(([k,v])=>k==='classic'||k==='deduction'||v===false)&&isBlankStats(statsByMode.classic)&&isBlankStats(statsByMode.blitz)&&isBlankStats(statsByMode.flash)&&isBlankStats(statsByMode['deduction-day'])&&isBlankStats(statsByMode['deduction-month'])&&isBlankStats(statsByMode['deduction-year'])&&isBlankStats(blitzRoundStats)&&Object.keys(blitzBest).length===0&&Object.keys(blitzBestNew).length===0&&Object.keys(suddenBest).length===0&&Object.keys(suddenBestNew).length===0&&stack.length===0&&forwardStack.length===0&&isBlankDedStacks(dedStack)&&isBlankDedStacks(dedForwardStack)&&Object.values(savedDedByType).every(isFreshDedSnap)&&backDepth===0&&locked===false&&revealed===false&&countedWrong===false&&canOverrideCorrect===false&&pendingWrongOverride===null&&overrideUsedThisQ===false&&timerDone===false&&calcPenaltyActive===false&&!Object.values(calcOpenByMode).some(Boolean)&&Object.keys(persistBtns).length===0&&flash===null&&blitzRunning===false&&active===false&&showTimerDate===false&&blitzRemain===60&&qRemain===5&&flashRemainMs===500&&flashPhase==='dash'&&lookupHistory.length===0&&lookupInput===""&&lookupOutput===""&&lookupCalcDate===null&&lookupSelectedHistoryId===null&&lookupCalcOpen===false&&aoxIsFresh&&classicIsFresh&&flashIsFresh&&blitzIsFresh&&deductionIsFresh;
       // Safety net (moved here from above so its dep array reads isFullyReset AFTER it's declared):
       // if state somehow flips to fully-reset while the Full Reset button is armed (shouldn't be
       // reachable in practice — fullReset disarms before firing — but defensive), disarm.
@@ -4021,108 +4072,9 @@ const ReactDOM = { createRoot, createPortal }
           <ClassicMode key={"classic-"+classicResetKey} visible={mode==="classic"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setClassicIsFresh}/>
           <FlashMode key={"flash-"+flashResetKey} visible={mode==="flash"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setFlashIsFresh}/>
           <BlitzMode key={"blitz-"+blitzResetKey} visible={mode==="blitz"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setBlitzIsFresh}/>
+          <DeductionMode key={"deduction-"+deductionResetKey} visible={mode==="deduction"} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} onFreshChange={setDeductionIsFresh}/>
           {mode==="lookup"&&(<div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div>)}
           {mode==="guide"&&(<div className="mt-2.5"><GuidePage/></div>)}
-          {/* Classic/Flash/Blitz render via their own self-contained components above
-              (ClassicMode/FlashMode/BlitzMode). Their old inline game block lived here and is
-              now deleted; Deduction's block (below) is the last one still inline in App. */}
-          {mode==="deduction"&&(
-            <div className="mt-5">
-              {/* 3-zone grid keeps Day/Month/Year buttons fixed in the center regardless of which
-                  toggles are active. Side zones (1fr each) flex to fill remaining space; toggles
-                  push to the OUTER edges via justify-start (left zone) and justify-end (right zone),
-                  leaving visible space between each toggle and the centered Day/Month/Year cluster.
-                  Toggle styling matches Blitz/AoX Allow Mistakes / One-By-One / Per Round buttons
-                  exactly (px-2 py-1 rounded-xl text-xs font-medium border) — minus flex-1, since
-                  these buttons size to content + min-width rather than stretching to fill.
-                  ab Cross, Jul Cross, and 1582 Only all share min-w-20 so all toggles
-                  are matched-width regardless of their label length.
-                  Day/Month/Year share min-w-16 so all three are the same width as each
-                  other (sized to "Month" the widest of the three with px-2 padding). They use
-                  surface-toggle (theme-adaptive border) like the toggles instead of a hard-coded
-                  purple border. */}
-              <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
-                <div className="flex justify-start">
-                  {dedType==="year"&&(()=>{
-                    // ab Cross disabled when year range doesn't span any 100-year boundary
-                    const abPossible=Math.floor(Math.max(1,minY)/100)!==Math.floor(maxY/100);
-                    const disabled=!abPossible;
-                    const active=abCrossOnly&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setAbCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}><i>ab</i> Cross</button>);
-                  })()}
-                </div>
-                <div className="flex gap-2 items-center">
-                  {["day","month","year"].map(t=>{
-                    // Year sub-type button auto-disables when range can't support a buildable
-                    // puzzle (yearSubPossible). Day and Month always available.
-                    const disabled=t==="year"&&!yearSubPossible;
-                    return(<button key={t} type="button" onClick={()=>{if(disabled)return;changeDedType(t);}} className={`px-2 py-1.5 rounded-xl text-sm font-medium border min-w-16 ${dedType===t?"btn-solid border-transparent text-white":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>{t[0].toUpperCase()+t.slice(1)}</button>);
-                  })}
-                </div>
-                <div className="flex justify-end">
-                  {dedType==="year"&&(()=>{
-                    // Jul Cross disabled when useJulian off, or range doesn't contain at least one
-                    // boundary pair ({1582, 1583} for Jan-Sep + Oct1-4, OR {1581, 1582} for Oct15+
-                    // + Nov + Dec). Range must contain 1582 plus at least one of its neighbors.
-                    const has1581=1581>=minY&&1581<=maxY,has1582=1582>=minY&&1582<=maxY,has1583=1583>=minY&&1583<=maxY;
-                    const julPossible=useJulian&&has1582&&(has1581||has1583);
-                    const disabled=!julPossible;
-                    const active=julCrossOnly&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setJulCrossOnly(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>Jul Cross</button>);
-                  })()}
-                  {dedType==="month"&&(()=>{
-                    // 1582 Only disabled when useJulian off or year range excludes 1582.
-                    const possible=useJulian&&1582>=minY&&1582<=maxY;
-                    const disabled=!possible;
-                    const active=monthOnly1582&&!disabled;
-                    return(<button type="button" onClick={()=>{if(disabled)return;setMonthOnly1582(v=>!v);}} className={`px-2 py-1 rounded-xl text-xs font-medium border min-w-20 ${active?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${disabled?" opacity-60 pointer-events-none":""}`}>1582 Only</button>);
-                  })()}
-                </div>
-              </div>
-              <div className="mt-4 rounded-2xl panel p-4">
-                <div className="text-center relative">
-                  {backDepth>0&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{(dedStack[dedType]||[]).length+1}</span>}
-                  <div className="text-3xl font-bold">{ded?fmtDatePartial(ded.y,ded.m,ded.d,ded._fmt,ded.type):"—"}</div>
-                  {ded&&<div className="mt-1 text-lg text-purple-100">Weekday: <span className="font-semibold">{DAY[ded.w]}</span></div>}
-                </div>
-                <div className="mt-4">
-                  {/* Year mode grid layouts:
-                        N=2 (Jul Cross) → grid-cols-2: symmetric side-by-side, each takes half row.
-                        N=5 (default)    → grid-cols-6: top row 3 buttons (each col-span-2 = 1/3 width),
-                                           bottom row 2 buttons (each col-span-3 = 1/2 width centered).
-                        Other lengths (defensive fallback) → grid-cols-3 with no col-span. */}
-                  {ded&&ded.type==="year"&&(()=>{const N=ded.options.length;const gridCls=N===2?"grid-cols-2":N===5?"grid-cols-6":"grid-cols-3";const colSpanFor=idx=>N===5?(idx<3?"col-span-2":"col-span-3"):"";return(<div className={`grid gap-2 ${gridCls}`} data-answer-grid="true">{ded.options.map((y,idx)=>{const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="year"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(y,idx)} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${colSpanFor(idx)}`}>{fmtYear(y)}</button>);})}</div>);})()}
-                  {ded&&ded.type==="month"&&(<div className="grid grid-cols-2 gap-3" data-answer-grid="true">{ded.options.map((mv,idx)=>{const last=idx===ded.options.length-1?"col-span-2":"";const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="month"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(mv,idx)} className={`${baseBtn} ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{mv}</button>);})}</div>)}
-                  {ded&&ded.type==="day"&&(<div className="grid grid-cols-3 gap-2" data-answer-grid="true">{ded.options.map((dv,idx)=>{const ps=persistBtns[idx];const isFlashing=!!(dedFlash&&dedFlash.kind==="day"&&dedFlash.index===idx);const bCls=buttonStateClass(ps,isFlashing,dedFlash&&dedFlash.ok,idleBtn);const perLocked=!!ps;const shouldDim=(locked||calcOpen||calcPenaltyActive)&&!ps&&!isFlashing;return(<button key={idx} type="button" onClick={()=>submitDedAnswer(dv,idx)} className={`${baseBtn} py-2 text-sm ${bCls} ${(perLocked||(locked||calcOpen||calcPenaltyActive))?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${centerLastOpt(idx,ded.options.length)}`}>{dv}</button>);})}</div>)}
-                </div>
-              </div>
-              <div className="mt-4 rounded-2xl panel p-3 space-y-3">
-                <div className="grid grid-cols-4 gap-2">
-                  <button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium" onClick={()=>runDeductionRound()}>New</button>
-                  <div className="col-span-1 flex gap-1">
-                    <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(dedStack[dedType]||[]).length===0?"opacity-60 pointer-events-none":""}`} onClick={goBack}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
-                    <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(dedForwardStack[dedType]||[]).length===0?"opacity-60 pointer-events-none":""}`} onClick={goForward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
-                  </div>
-                  <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={reveal}>Reveal</button>
-                  <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={override}>Override</button>
-                </div>
-                {(()=>{
-                  // Build cellDates for Deduction Month sub-mode 1582 only, when the
-                  // answer cell groups months from both calendars. Each entry is a
-                  // {y,m,d} interpretation that MethodExplanation will use for dual codes.
-                  let cellDates=null;
-                  if(ded&&ded.type==='month'&&ded.y===1582&&ded.boxes){
-                    const ci=getDedCorrectIdx();
-                    const box=ci>=0?ded.boxes[ci]:null;
-                    if(box&&Array.isArray(box.months)&&box.months.length>=2){
-                      cellDates=box.months.map(m=>({y:ded.y,m,d:ded.d}));
-                    }
-                  }
-                  return(<MethodBreakdownSection date={calcTarget} open={calcOpen} onOpenChange={handleCalcOpenChange} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={calcTarget?._jul??useJulian} displayedFormat={calcTarget?._fmt||dateFormat} cellDates={cellDates}/>);
-                })()}
-              </div>
-            </div>
-          )}
         </div>
         </div>
         </>

@@ -14,7 +14,7 @@
 // Flash/Blitz/Deduction pass their own config when they move onto the engine.
 // ─────────────────────────────────────────────────────────────────────────
 import { useReducer, useRef, useEffect, useMemo } from 'react'
-import { gameReducer, initEngine, activeWday } from './gameReducer.js'
+import { gameReducer, initEngine, correctIndexOf } from './gameReducer.js'
 
 export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff }) {
   const [state, dispatch] = useReducer(gameReducer, undefined, () => initEngine(genDate(minY, maxY)))
@@ -29,10 +29,9 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   const elapsed = () => (tStartRef.current != null ? (performance.now() - tStartRef.current) / 1000 : null)
 
   const tracking = !timingOff // Classic: timing visible ⇒ record solve times into stats.times
-  const correct = useMemo(
-    () => activeWday(state.date.y, state.date.m, state.date.d, useJulian),
-    [state.date, useJulian],
-  )
+  // The correct answer index — weekday for Classic/Flash/Blitz, puzzle option for Deduction
+  // (correctIndexOf dispatches on whether state.date is a puzzle). Used for the answer flash.
+  const correct = useMemo(() => correctIndexOf(state.date, useJulian), [state.date, useJulian])
 
   // Override availability — mirrors App's retroOverrideEligible / overrideAvail (Classic scope).
   const last = state.stack[state.stack.length - 1]

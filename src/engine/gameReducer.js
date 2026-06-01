@@ -25,6 +25,30 @@ import { computeHasCredit, markBtns, mkBtnsWithCorrect, entryWithGreen } from '.
 export const activeWday = (y, m, d, useJulian) =>
   useJulian && isJulianDate(y, m, d) ? wdayJulian(y, m, d) : wday(y, m, d)
 
+// The correct answer index for a question. This is what makes the one shared engine serve
+// BOTH weekday modes and Deduction: a Deduction puzzle (entry.type set) resolves by its own
+// options/answer — year: options.indexOf(y); month: the box whose months include m (or
+// options.indexOf(m) when boxless); day: options.indexOf(d) — while a plain weekday question
+// resolves by activeWday on (y,m,d). Mirrors App's getDedCorrectIdx / dedCorrectIdxFor and the
+// same dispatch in answerButtons.entryWithGreen. Weekday entries have no `type`, so this is
+// byte-identical to the old direct activeWday call for Classic/Flash/Blitz.
+export const correctIndexOf = (e, useJulian) => {
+  if (e && e.type) {
+    if (e.type === 'year') return e.options.findIndex((y) => y === e.y)
+    if (e.type === 'month')
+      return e.boxes ? e.boxes.findIndex((b) => b.months.includes(e.m)) : e.options.findIndex((m) => m === e.m)
+    return e.options.findIndex((d) => d === e.d)
+  }
+  return activeWday(e.y, e.m, e.d, useJulian)
+}
+
+// A stack / forward entry carries the question's date-or-puzzle fields PLUS bookkeeping (btns,
+// capsule, hasCredit, isLive, liveState). Strip the bookkeeping to recover just the date/puzzle
+// fields — so FORWARD restores a clean `date` that still keeps Deduction's puzzle fields
+// (type/options/w/…), not only y/m/d/_fmt/_jul. For weekday entries the result is exactly
+// {y,m,d,_fmt,_jul}, identical to the previous explicit field pick.
+const stripEntryMeta = ({ btns, overrideUsed, capsule, hasCredit, isLive, liveState, ...date }) => date
+
 const blankStats = () => ({ played: 0, good: 0, streak: 0, best: 0, times: [] })
 
 // The launch / fresh-question engine state for a given starting date.
@@ -77,9 +101,14 @@ const advance = (state, { nextDate, useJulian, finalBtns, saved }) => {
       ),
     ]
   }
-  const pendingWrongOverride = state.countedWrong
-    ? { wrongTime: state.wrongTime, snapshot: state.preCalcPenaltySnapshot }
-    : null
+  // Deduction never arms pendingWrongOverride (App's runDeductionRound, unlike pushAndNext,
+  // doesn't), so a wrong-then-right on a puzzle is reclaimed by Path 5 (retro-flip the just-
+  // pushed entry), not Path 4. Gate on the finished question being a puzzle (date.type set).
+  const isDeductionQ = !!(state.date && state.date.type)
+  const pendingWrongOverride =
+    state.countedWrong && !isDeductionQ
+      ? { wrongTime: state.wrongTime, snapshot: state.preCalcPenaltySnapshot }
+      : null
   return {
     ...state,
     questionId: (state.questionId ?? 0) + 1,
@@ -145,7 +174,7 @@ export function gameReducer(state, action) {
     case 'ANSWER': {
       const { idx, useJulian, elapsed, tracking, saveStats, nextDate } = action
       if (state.locked) return state
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
 
       if (idx === correct) {
@@ -196,7 +225,7 @@ export function gameReducer(state, action) {
     // otherwise it burns the question (counts as played, streak reset) and locks.
     case 'REVEAL': {
       const { useJulian, elapsed, saveStats } = action
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       if (state.locked && !state.revealed && state.backDepth > 0) {
         return { ...state, persistBtns: mkBtnsWithCorrect(state.persistBtns, correct), revealed: true }
       }
@@ -226,7 +255,7 @@ export function gameReducer(state, action) {
       if (state.locked && !state.revealed && state.backDepth > 0) {
         return { ...state, calcOpen: true }
       }
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
       let next = { ...state, calcPenaltyActive: true, calcOpen: true, saveStatsThisQ: effective }
       const firstPenalty = !state.countedWrong && !state.revealed
@@ -283,7 +312,7 @@ export function gameReducer(state, action) {
     // marks the answer and locks). Distinct from REVEAL, which counts a played miss.
     case 'LOCK_REVEAL': {
       const { useJulian } = action
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       return { ...state, persistBtns: mkBtnsWithCorrect(state.persistBtns, correct), locked: true, revealed: true }
     }
 
@@ -293,7 +322,7 @@ export function gameReducer(state, action) {
     // (!active disables the grid). Distinct from LOCK_REVEAL (no stat) + REVEAL (countedWrong).
     case 'TIMEOUT_MISS': {
       const { useJulian, saveStats } = action
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
       const stats = effective ? { ...state.stats, played: state.stats.played + 1, streak: 0 } : state.stats
       return {
@@ -339,7 +368,7 @@ export function gameReducer(state, action) {
     // stat updates apply unconditionally here. Paths are checked 1→5; first match wins.
     case 'OVERRIDE': {
       const { useJulian, tracking, timingOff, nextDate } = action
-      const correct = activeWday(state.date.y, state.date.m, state.date.d, useJulian)
+      const correct = correctIndexOf(state.date, useJulian)
       const s0 = { ...state, overrideUsedThisQ: true } // setOverrideUsedThisQ(true) at top
 
       // PATH 1 — browsing-back: delta-adjust stats for the browsed entry, recalc streak.
@@ -386,7 +415,7 @@ export function gameReducer(state, action) {
         let s = { ...s0, stats, prevStatsSnapshot: null, wrongTime: null, canOverrideCorrect: false, countedWrong: true }
         if (u.wasWrong && s.stack.length) {
           const last = s.stack[s.stack.length - 1]
-          const wd = activeWday(last.y, last.m, last.d, useJulian)
+          const wd = correctIndexOf(last, useJulian)
           s = { ...s, stack: [...s.stack.slice(0, -1), { ...last, btns: { [wd]: 'correct' }, overrideUsed: true }] }
         }
         if (!timingOff) {
@@ -434,7 +463,7 @@ export function gameReducer(state, action) {
         const stats = snap
           ? { ...state.stats, played: snap.played + 1, good: snap.good + 1, times }
           : { ...state.stats, good: state.stats.good + 1, times }
-        const wd = activeWday(last.y, last.m, last.d, useJulian)
+        const wd = correctIndexOf(last, useJulian)
         const newStack = [...state.stack.slice(0, -1), { ...last, btns: { [wd]: 'correct' }, overrideUsed: true, hasCredit: true }]
         const { curStreak, bestStreak } = streaksFromStacks(newStack, state.forwardStack)
         let s = {
@@ -468,7 +497,7 @@ export function gameReducer(state, action) {
       if (retroEligible) {
         const target = state.stack[state.stack.length - 1]
         const u = target.capsule.snapshot
-        const wd = activeWday(target.y, target.m, target.d, useJulian)
+        const wd = correctIndexOf(target, useJulian)
         const times = [...state.stats.times]
         let stats
         let newLast
@@ -565,7 +594,7 @@ export function gameReducer(state, action) {
         stack: [...state.stack, pushed],
         forwardStack: state.forwardStack.slice(0, -1),
         backDepth: Math.max(0, state.backDepth - 1),
-        date: { y: fwd.y, m: fwd.m, d: fwd.d, _fmt: fwd._fmt, _jul: fwd._jul },
+        date: stripEntryMeta(fwd),
       }
       if (fwd.isLive) {
         const ls = fwd.liveState || {}
