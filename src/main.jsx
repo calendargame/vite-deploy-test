@@ -21,6 +21,7 @@ import LookupCard from './components/LookupCard.jsx'
 import { MethodExplanation, MethodBreakdownSection } from './components/MethodBreakdown.jsx'
 import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
+import { computeStreaks } from './engine/streak.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -1510,10 +1511,7 @@ const ReactDOM = { createRoot, createPortal }
           newCurHasCredit,
           ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
         ];
-        let curStreak=0;
-        for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
-        let bestStreak=0,run=0;
-        for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+        const { curStreak, bestStreak } = computeStreaks(history)
         updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
         if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
           if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
@@ -1732,10 +1730,7 @@ const ReactDOM = { createRoot, createPortal }
             ...newStack.map(e=>!!e.hasCredit),
             ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
           ];
-          let curStreak=0;
-          for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
-          let bestStreak=0,run=0;
-          for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+          const { curStreak, bestStreak } = computeStreaks(history)
           updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
           if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
             if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
@@ -1833,10 +1828,7 @@ const ReactDOM = { createRoot, createPortal }
             ...newStack.map(e=>!!e.hasCredit),
             ...fwdStack.slice().reverse().filter(e=>!e.isLive).map(e=>!!e.hasCredit)
           ];
-          let curStreak=0;
-          for(let i=history.length-1;i>=0;i--){if(history[i])curStreak++;else break;}
-          let bestStreak=0,run=0;
-          for(const h of history){if(h){run++;if(run>bestStreak)bestStreak=run;}else run=0;}
+          const { curStreak, bestStreak } = computeStreaks(history)
           updateStats(c=>{c.streak=curStreak;c.best=bestStreak;});
           if(mode==="blitz"){setBlitzRoundStats(p=>({...p,streak:curStreak,best:bestStreak}));
             if(timerDone){const bk=getBlitzBk();const rid=currentBlitzRoundIdRef.current;
