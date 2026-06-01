@@ -70,7 +70,7 @@ export default function StatPanel({stats,armedSpan}){
           const sz=sizeForValue(s.value);
           items.push(
             <Tag key={s.label} {...props} className="flex-1 flex flex-col items-center py-2 gap-0.5">
-              <span className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off?" line-through":""}`}>{s.label}</span>
+              <span className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off?" strike-center":""}`}>{s.label}</span>
               <span className={`${sz} font-semibold tabular-nums leading-tight mt-0.5`}>{s.off?"—":s.value}</span>
             </Tag>
           );
