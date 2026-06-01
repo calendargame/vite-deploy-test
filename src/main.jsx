@@ -22,6 +22,7 @@ import { MethodExplanation, MethodBreakdownSection } from './components/MethodBr
 import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
 import { computeStreaks } from './engine/streak.js'
+import { computeHasCredit, markBtns, mkBtnsWithCorrect, entryWithGreen } from './engine/answerButtons.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -239,51 +240,13 @@ const ReactDOM = { createRoot, createPortal }
     const blockMinus=e=>{if(e.key==="-"||e.key==="Subtract"||e.key==="Minus")e.preventDefault();};
     const blockMinusBI=e=>{if(e.data&&e.data.includes("-"))e.preventDefault();};
 
-    // Returns an entry's btns augmented with a synthesized green on the correct
-    // answer when the entry has a wrong but no correct. Also downgrades any
-    // 'wrong-latest' to 'wrong-prev' so the dim-when-green-present rendering
-    // applies to all reds in the augmented entry. The synthesized green
-    // honors the entry's _jul snapshot (calendar system at generation), with
-    // fallbackJulian used when the snapshot is missing.
-    // For deduction entries (entry.type set), the correct index is derived per
-    // sub-mode: year uses options.indexOf(y); month uses boxes.findIndex by m
-    // (or options.indexOf when no boxes); day uses options.indexOf(d).
-    // Non-deduction entries use wday/wdayJulian on (y,m,d).
-    const entryWithGreen=(entry,fallbackJulian)=>{
-      if(!entry)return entry;
-      const btns=entry.btns||{};
-      const vals=Object.values(btns);
-      const hasCorrect=vals.includes('correct');
-      if(hasCorrect)return entry;
-      const hasWrong=vals.some(v=>v==='wrong'||v==='wrong-latest'||v==='wrong-prev');
-      if(!hasWrong)return entry;
-      let correctIdx=-1;
-      if(entry.type){
-        if(entry.type==='year'&&entry.options)correctIdx=entry.options.findIndex(yy=>yy===entry.y);
-        else if(entry.type==='month'){
-          if(entry.boxes)correctIdx=entry.boxes.findIndex(b=>b.months&&b.months.includes(entry.m));
-          else if(entry.options)correctIdx=entry.options.findIndex(mm=>mm===entry.m);
-        }
-        else if(entry.type==='day'&&entry.options)correctIdx=entry.options.findIndex(dd=>dd===entry.d);
-      }else{
-        const useJul=(entry._jul!=null?entry._jul:fallbackJulian)&&isJulianDate(entry.y,entry.m,entry.d);
-        correctIdx=useJul?wdayJulian(entry.y,entry.m,entry.d):wday(entry.y,entry.m,entry.d);
-      }
-      if(correctIdx<0)return entry;
-      const newBtns={...btns};
-      for(const k in newBtns){if(newBtns[k]==='wrong-latest')newBtns[k]='wrong-prev';}
-      newBtns[correctIdx]='correct';
-      return{...entry,btns:newBtns};
-    };
+    // entryWithGreen → src/engine/answerButtons.js, imported at top (shared with the reducer + AoxMode).
 
     // Timing constants (keep in sync with CSS .expander transition)
     // CODES_CLOSE_MS → src/lib/constants.js, imported at top (shared with the codes panel).
     const FLASH_MS=550;       // green/red button flash duration (ms)
 
-    // Shared button-state helpers (used by both App and AoxMode)
-    const computeHasCredit=btns=>{if(!btns)return false;const vals=Object.values(btns);return vals.length>0&&vals.includes('correct')&&!vals.some(v=>v==='wrong-latest'||v==='wrong-prev');};
-    const markBtns=(btns,idx,state)=>{const next={...btns};for(const k in next){if(next[k]==='wrong-latest')next[k]='wrong-prev';}next[idx]=state;return next;};
-    const mkBtnsWithCorrect=(btns,idx)=>markBtns(btns,idx,'correct');
+    // computeHasCredit, markBtns, mkBtnsWithCorrect → src/engine/answerButtons.js, imported at top.
 
     // Expander → src/components/Expander.jsx, imported at top.
 
