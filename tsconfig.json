@@ -1,0 +1,24 @@
+{
+  // Incremental JS->TS migration (Stage C, final item). The codebase is still mostly .js/.jsx,
+  // so allowJs keeps it compiling while checkJs:false means we DON'T type-check JS yet — only the
+  // .ts/.tsx files we convert get the full `strict` treatment. tsc runs as a type-checker only
+  // (noEmit); Vite/esbuild does the actual transform. As modules convert, they come under strict
+  // checking one at a time, behind the test suite.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}
