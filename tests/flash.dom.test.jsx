@@ -238,3 +238,51 @@ describe('Flash — characterization (batch 2: Reveal, Override, consecutive rou
     expect(isDisabled(ctrl('<'))).toBe(true) // history cleared (Back disabled)
   })
 })
+
+// Deliberate behavior fixes (2026-06-01) — see PROJECT.md bug list.
+describe('Flash — bug fixes (Reveal availability + Show Codes freeze)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  // Bug #5: Reveal was wrongly locked during the flash "show" phase (Show Codes was not).
+  it('Reveal is available (not disabled) during the flash', () => {
+    mountApp()
+    switchToFlash()
+    act(() => {
+      fireEvent.click(ctrl('Begin'))
+    })
+    expect(isDisabled(ctrl('Reveal'))).toBe(false)
+  })
+
+  // Bug #4: opening Show Codes during the flash freezes the countdown — it cancels the auto-hide
+  // timer, so the date stays on screen instead of vanishing to "…" while you study the codes.
+  it('Show Codes during the flash freezes the countdown: the date stays shown (not "…")', () => {
+    mountApp()
+    switchToFlash()
+    act(() => {
+      fireEvent.click(ctrl('Begin'))
+    })
+    expect(dateDisplayText()).toMatch(/^-?\d+-\d+-\d+$/) // date shown during the flash
+    act(() => {
+      fireEvent.click(ctrl('Show Codes'))
+    })
+    act(() => {
+      vi.advanceTimersByTime(3000) // far past the 500ms reveal window
+    })
+    expect(dateDisplayText()).toMatch(/^-?\d+-\d+-\d+$/) // STILL the date — auto-hide was cancelled
+    expect(statValue('Score')).toBe('0/1') // codes penalty counted the question as a miss
+  })
+})

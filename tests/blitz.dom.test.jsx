@@ -235,3 +235,53 @@ describe('Blitz — characterization (batch 3: Override)', () => {
     expect(screen.getByText(/Best Score: 0\b/)).toBeInTheDocument()
   })
 })
+
+// Deliberate behavior fixes (2026-06-01) — the unified session-end rule. See PROJECT.md.
+describe('Blitz — bug fixes (override-to-wrong + Show Codes end the round)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  // Bug #1: with Allow Mistakes off, flipping a correct answer to wrong via Override is a
+  // mistake and must end the round (like a real wrong answer). It used to leave the round live.
+  it('Allow Mistakes OFF: overriding a correct answer to wrong ends the round', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Allow Mistakes') // off
+    begin()
+    click(correctName(readDate())) // Q1 correct → 1/1, advances to a fresh Q2
+    expect(statValue('Score')).toBe('1/1')
+    expect(isDisabled(ctrl('Override'))).toBe(false) // retro-override of Q1 is available
+    act(() => {
+      fireEvent.click(ctrl('Override'))
+    }) // flip Q1 correct → wrong
+    expect(statValue('Score')).toBe('0/1') // credit removed
+    expect(isDisabled(dayBtn('Sunday'))).toBe(true) // round ended → answer grid locked
+  })
+
+  // Bug #3: opening Show Codes mid-round must end the round (so Best Score records and the
+  // countdown stops), like Reveal. The migration dropped the round-end (Best was never saved).
+  it('Show Codes during an active round ends the round and records Best Score', () => {
+    mountApp()
+    switchToBlitz()
+    begin()
+    click(correctName(readDate())) // round score 1
+    act(() => {
+      fireEvent.click(ctrl('Show Codes'))
+    }) // open codes mid-round → ends the round
+    expect(screen.getByText(/Best Score: 1\b/)).toBeInTheDocument() // Best recorded (was the bug)
+    expect(isDisabled(dayBtn('Sunday'))).toBe(true) // round ended → answer grid locked
+  })
+})

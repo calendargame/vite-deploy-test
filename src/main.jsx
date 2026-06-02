@@ -253,7 +253,7 @@ const ReactDOM = { createRoot, createPortal }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-01T03:56:00Z');
+    const DEPLOY_TS=new Date('2026-06-02T03:32:00Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
@@ -820,6 +820,17 @@ const ReactDOM = { createRoot, createPortal }
       const startFlashBar=ms=>{requestAnimationFrame(()=>{if(!flashBarRef.current)return;const s=flashBarRef.current;s.style.transition="none";s.style.width="100%";s.getBoundingClientRect();s.style.transition=`width ${ms}ms linear`;s.style.width="0%";});};
       const endFlashPhase=useCallback(()=>{setFlashPhase("hide");flashDeadlineRef.current=null;setFlashRemainMs(0);flashTimerRef.current=null;},[]);
       const stopFlash=()=>{clearTimeout(flashTimerRef.current);flashTimerRef.current=null;setFlashPhase("dash");flashDeadlineRef.current=null;setFlashRemainMs(flashMs);resetFlashBar();};
+      // freezeFlash — Show-Codes-during-the-flash teardown. Unlike stopFlash (which RESETS the
+      // bar to 100% + number to full for the idle state), this FREEZES the countdown in place:
+      // it cancels the auto-hide timer, stops the rAF number countdown (setActive(false)), and
+      // pins the bar at its current rendered width so the bar and number freeze TOGETHER. The
+      // date stays shown. (The original applyCalcPenalty froze the number but missed the bar's
+      // CSS transition — bug #4. This completes the freeze.)
+      const freezeFlash=()=>{
+        clearTimeout(flashTimerRef.current);flashTimerRef.current=null;flashDeadlineRef.current=null;
+        if(flashBarRef.current){const w=getComputedStyle(flashBarRef.current).width;flashBarRef.current.style.transition="none";flashBarRef.current.style.width=w;}
+        setActive(false);setShowTimerDate(true);setFlashPhase("dash");
+      };
 
       // rAF countdown of the reveal-time label while showing (cosmetic; matches App's loop).
       useEffect(()=>{
@@ -846,6 +857,10 @@ const ReactDOM = { createRoot, createPortal }
         if(i===correct){setActive(false);stopFlash();}   // a correct answer ends the flash
       };
       const onReveal=()=>{eng.reveal();setActive(false);setShowTimerDate(true);stopFlash();};
+      // Opening Show Codes mid-flash freezes the countdown (bar + number) and keeps the date
+      // shown, then applies the codes penalty — bug #4. Closing it (or opening on a non-live
+      // entry) is the normal toggle.
+      const onShowCodes=open=>{if(open&&active)freezeFlash();eng.showCodes(open);};
       const onOverride=()=>{const wasActive=active;if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});eng.override();if(wasActive){setActive(false);stopFlash();}};
       const resetRound=()=>{eng.resetRound();setActive(false);setShowTimerDate(false);stopFlash();};   // primary "Reset" while live (= App arm)
 
@@ -883,7 +898,10 @@ const ReactDOM = { createRoot, createPortal }
       const shouldShowTimerDate=active||showTimerDate;
       const flashHiding=active&&flashPhase==="hide";
       const optionsDisabled=!active||state.locked||state.calcOpen||state.calcPenaltyActive;
-      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive||(!showTimerDate&&!flashHiding);
+      // Reveal is available whenever a date is on screen — including DURING the flash (matching
+      // Show Codes, which keys off shouldShowTimerDate). Was wrongly locked in the "show" phase
+      // via `!showTimerDate&&!flashHiding`; `!shouldShowTimerDate` enables it — bug #5.
+      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive||!shouldShowTimerDate;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
       const idleBtn="surface-button";
 
@@ -929,7 +947,7 @@ const ReactDOM = { createRoot, createPortal }
                 <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={onReveal}>Reveal</button>
                 <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
               </div>
-              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={open=>eng.showCodes(open)} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
+              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={onShowCodes} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
             </div>
           </div>
         </div>
@@ -1031,8 +1049,24 @@ const ReactDOM = { createRoot, createPortal }
           if(perQ||!allowMistakes){eng.lockReveal();endRound();}
         }
       };
-      const onOverride=()=>{if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});eng.override();}; // best reconciled by the effect
+      // Override-to-wrong is a mistake: flipping a CORRECT answer to wrong (a live first-try
+      // reversal, or retro-flipping the most-recent correct history entry) ends the round when
+      // Allow Mistakes is off (or Per Question) — exactly like a real wrong answer (bug #1).
+      // Wrong→credit overrides (countedWrong / pendingWrongOverride) are corrections and never
+      // end the round. Detect the to-wrong direction from the same fields the reducer reads.
+      const onOverride=()=>{
+        let flipToWrong=false;
+        if(state.canOverrideCorrect&&state.prevStatsSnapshot)flipToWrong=!state.prevStatsSnapshot.wasWrong;
+        else if(eng.retroOverrideEligible){const last=state.stack[state.stack.length-1];flipToWrong=!!(last?.capsule?.snapshot&&!last.capsule.snapshot.wasWrong);}
+        if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});
+        eng.override(); // best reconciled by the timerDone effect
+        if(active&&flipToWrong&&(perQ||!allowMistakes))endRound();
+      };
       const onReveal=()=>{eng.reveal();endRound();};
+      // Opening Show Codes during an active round ends the round (so Best Score is recorded and
+      // the countdown stops), exactly like Reveal — bug #3. The original applyCalcPenalty ended
+      // the round for an active timer; the Blitz migration dropped it (bare eng.showCodes).
+      const onShowCodes=open=>{eng.showCodes(open);if(open&&active)endRound();};
       const resetRound=()=>{eng.resetStats();setActive(false);setTimerDone(false);setShowTimerDate(false);stopRound();resetTimerBars();}; // App's arm (resets stats for blitz)
 
       // Reconcile Best when a round is over: set to max(S) tagged with the round id, and roll
@@ -1126,7 +1160,7 @@ const ReactDOM = { createRoot, createPortal }
                 <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={onReveal}>Reveal</button>
                 <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
               </div>
-              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={open=>eng.showCodes(open)} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
+              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={onShowCodes} className="" contentClassName="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
             </div>
           </div>
         </div>
@@ -3660,8 +3694,12 @@ const ReactDOM = { createRoot, createPortal }
             between the title row and the first GuidePage panel. The <GuidePage/> wrapper
             also drops mt-5 → mt-2.5 to compensate, so the total gap stays 20px — but the
             visual "lock line" is centered between title row and first panel rather than
-            sitting right at the title row's bottom edge. */}
-        <div ref={htpStickyBarRef} style={{position:'fixed',top:0,left:0,right:0,zIndex:30}} className={`htp-sticky-bar bg-(--bg1) w-full pt-5${mode==="guide"?" pb-2.5":""}${appScrolledFromTop?" elev-shadow-down":""}`}>
+            sitting right at the title row's bottom edge.
+            ⚠ The SPACE in `pt-5 ${` is REQUIRED — Tailwind v4's source scanner silently drops a
+            utility glued directly to `${` when it appears nowhere else; without it the bar lost
+            its pt-5 (20px) top padding and the whole site sat ~20px too high. Don't remove the
+            space. (Calendar Game layout bug-fix, 2026-06-01.) */}
+        <div ref={htpStickyBarRef} style={{position:'fixed',top:0,left:0,right:0,zIndex:30}} className={`htp-sticky-bar bg-(--bg1) w-full pt-5 ${mode==="guide"?" pb-2.5":""}${appScrolledFromTop?" elev-shadow-down":""}`}>
           <div className="mx-auto px-4 w-full max-w-[480px] relative">
             <div className="flex items-center justify-between gap-2">
               {/* header left: title */}

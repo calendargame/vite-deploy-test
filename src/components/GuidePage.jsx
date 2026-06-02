@@ -121,13 +121,17 @@ export default function GuidePage() {
           green-upper-left (originally correct) and red-lower-right (now counted wrong). You can
           only override each date once. Overriding a wrong answer (regardless of how) clears any
           wrong highlights; only the correct answer is shown. In Blitz, you can override past dates
-          after the round ends to adjust your score and saved bests. In AoX without Allow Mistakes,
-          overriding a correct answer ends the run. Override is locked when Save Stats is off.
+          after the round ends to adjust your score and saved bests; and with Allow Mistakes off (or
+          in Per Question), overriding a correct answer to wrong during a round ends the round, just
+          like a wrong answer. In AoX without Allow Mistakes, overriding a correct answer ends the
+          run. Override is locked when Save Stats is off.
         </p>
         <p>
           <b>Show Codes</b> — reveals the calculation codes for the current date. Counts as wrong if
           you haven't already answered incorrectly. No penalty on unanswered dates while browsing
-          back. In AoX without Allow Mistakes, opening Show Codes ends the run.
+          back. In Blitz, opening Show Codes during a round ends the round and records your bests; in
+          Flash it freezes the countdown so the date stays on screen while you study the codes. In AoX
+          without Allow Mistakes, opening Show Codes ends the run.
         </p>
       </GuideSection>
       <GuideSection id="stats" title="Stats" openId={open} onToggle={toggle}>
@@ -647,6 +651,11 @@ export default function GuidePage() {
           hidden. Answer from memory. Reset Stats clears your stats and question history.
           Mid-question, Reset Stats always generates a new date and returns to the dash state.
         </p>
+        <p>
+          While the date is showing you can also press Reveal (shows the answer and counts a miss) or
+          Show Codes. Opening Show Codes freezes the countdown — the timer bar and the number stop
+          together — and keeps the date on screen so you can study the calculation.
+        </p>
       </GuideSection>
       <GuideSection id="blitz" title="Blitz" openId={open} onToggle={toggle}>
         <p>
@@ -666,7 +675,9 @@ export default function GuidePage() {
         </p>
         <p>
           When the round ends, the correct answer for the current date is highlighted and your bests
-          are recorded. You can then browse your round's history with Back/Forward and override past
+          are recorded. A round also ends if you give up on the current date with Reveal or Show
+          Codes, or — with Allow Mistakes off (or in Per Question) — if you override a correct answer
+          to wrong. You can then browse your round's history with Back/Forward and override past
           dates to adjust your score and saved bests. Overriding a wrong answer that ended the round
           resumes it.
         </p>

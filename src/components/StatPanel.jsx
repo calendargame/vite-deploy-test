@@ -12,6 +12,11 @@
 //
 // Extracted from main.jsx in Stage C, Step 4b (verbatim). No app state, no
 // hooks — props in, JSX out.
+//
+// ⚠ The label's className keeps a SPACE before `${s.off…}` (`whitespace-nowrap ${`).
+// It's required: Tailwind v4's source scanner silently drops any utility glued
+// directly to `${` when that class appears nowhere else, which made the stat
+// labels wrap. Don't "tidy" the space away. (Calendar Game layout bug-fix, 2026-06-01.)
 export default function StatPanel({ stats, armedSpan }) {
   // For fractional values (Score, Streak as "X/Y"), shrink the value font
   // when either side reaches 1000+ or 10000+ to prevent overflow on long
@@ -82,7 +87,7 @@ export default function StatPanel({ stats, armedSpan }) {
               className="flex-1 flex flex-col items-center py-2 gap-0.5"
             >
               <span
-                className={`text-xs text-purple-200/80 leading-none whitespace-nowrap${s.off ? ' strike-center' : ''}`}
+                className={`text-xs text-purple-200/80 leading-none whitespace-nowrap ${s.off ? ' strike-center' : ''}`}
               >
                 {s.label}
               </span>
