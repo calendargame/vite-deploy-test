@@ -298,6 +298,15 @@ const ReactDOM = { createRoot, createPortal }
       const armedSpan=(timingArmed&&saveStats)?{startIdx:3,endIdx:5,label:"Enable and Reset Stats?",onClick:toggleTimingOff,btnRef:timingArmBtnRef}:null;
       return {scoringOff,timingArmed,statsArr,armedSpan};
     }
+    // Run fn() whenever any value in `deps` changes — skipping the initial mount. The generic
+    // "react to a settings/toggle change" effect the modes use to regen an unanswered live date
+    // (the engine's regenDate no-ops on a burned/browsed date). fn is read through a ref so the
+    // latest closure runs without having to list it (or the engine) in the dependency array.
+    function useChangeEffect(deps, fn){
+      const fnRef=useRef(fn);fnRef.current=fn;
+      const firstRef=useRef(true);
+      useEffect(()=>{if(firstRef.current){firstRef.current=false;return;}fnRef.current();},deps);   // eslint-disable-line react-hooks/exhaustive-deps
+    }
 
     // computeHasCredit, markBtns, mkBtnsWithCorrect → src/engine/answerButtons.js, imported at top.
 
@@ -778,15 +787,7 @@ const ReactDOM = { createRoot, createPortal }
       // Julian-chance / year-range change regens an UNANSWERED live date; a useJulian toggle
       // keeps it (live useJulian flows through to the answer + codes). REGEN_DATE no-ops on a
       // burned or browsed date, so we just fire it on the relevant changes.
-      const prevPopRef=useRef({randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY});
-      useEffect(()=>{
-        const p=prevPopRef.current;
-        const changed=p.randomFormat!==randomFormat||p.dateFormat!==dateFormat||p.leapChance!==leapChance||p.janFebChance!==janFebChance||p.julianChance!==julianChance||p.minY!==minY||p.maxY!==maxY;
-        prevPopRef.current={randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY};
-        if(changed)eng.regenDate();
-        // `eng` is in deps so the rule is satisfied; the body is a cheap guarded compare and
-        // regenDate only fires when a setting actually changed (prevPopRef), so no render loop.
-      },[randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,eng]);
+      useChangeEffect([randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY],()=>eng.regenDate());
       // Freshness — engine state at launch default + Classic's own toggle/flash fields. Reported up
       // via onFreshChange so App's isFullyReset (Full Reset dim/lock) accounts for Classic.
       const classicIsFresh=engineFresh(state)&&timingOff===true&&scoringOff===false&&timingArmed===false&&flash===null;
@@ -909,13 +910,7 @@ const ReactDOM = { createRoot, createPortal }
         onHide:()=>{if(active){setActive(false);stopFlash();}},
       });
 
-      const prevPopRef=useRef({randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY});
-      useEffect(()=>{
-        const p=prevPopRef.current;
-        const changed=p.randomFormat!==randomFormat||p.dateFormat!==dateFormat||p.leapChance!==leapChance||p.janFebChance!==janFebChance||p.julianChance!==julianChance||p.minY!==minY||p.maxY!==maxY;
-        prevPopRef.current={randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY};
-        if(changed)eng.regenDate();   // engine no-ops on a burned/browsed date (same as App's regen-on-change)
-      },[randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,eng]);
+      useChangeEffect([randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY],()=>eng.regenDate());
 
       // Freshness for App's isFullyReset (Flash owns its state now): engine fresh + Flash's own fields.
       const flashIsFresh=engineFresh(state)&&timingOff===false&&scoringOff===false&&timingArmed===false&&flash===null&&active===false&&flashPhase==="dash"&&showTimerDate===false&&flashMs===500&&flashRemainMs===500;
@@ -1245,22 +1240,10 @@ const ReactDOM = { createRoot, createPortal }
       // Settings-change regen: regen ALL three engines' live puzzle (each no-ops on a burned or
       // browsed date), matching App's "regen the current + cleanse FRESH non-current" on a
       // format / random-format / leap / Jan-Feb / Julian-chance / range / calendar change.
-      const prevPopRef=useRef({randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian});
-      useEffect(()=>{
-        const p=prevPopRef.current;
-        const changed=p.randomFormat!==randomFormat||p.dateFormat!==dateFormat||p.leapChance!==leapChance||p.janFebChance!==janFebChance||p.julianChance!==julianChance||p.minY!==minY||p.maxY!==maxY||p.useJulian!==useJulian;
-        prevPopRef.current={randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian};
-        if(changed){dayEng.regenDate();monthEng.regenDate();yearEng.regenDate();}
-      },[randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian,dayEng,monthEng,yearEng]);
+      useChangeEffect([randomFormat,dateFormat,leapChance,janFebChance,julianChance,minY,maxY,useJulian],()=>{dayEng.regenDate();monthEng.regenDate();yearEng.regenDate();});
       // Toggle-change regen: a relevant Deduction toggle regens the ACTIVE engine's puzzle (the
       // toggles only render in their own sub-mode, so the active engine is always the right one).
-      const prevTogRef=useRef({abCrossOnly,julCrossOnly,monthOnly1582});
-      useEffect(()=>{
-        const p=prevTogRef.current;
-        const changed=p.abCrossOnly!==abCrossOnly||p.julCrossOnly!==julCrossOnly||p.monthOnly1582!==monthOnly1582;
-        prevTogRef.current={abCrossOnly,julCrossOnly,monthOnly1582};
-        if(changed)eng.regenDate();
-      },[abCrossOnly,julCrossOnly,monthOnly1582,eng]);
+      useChangeEffect([abCrossOnly,julCrossOnly,monthOnly1582],()=>eng.regenDate());
 
       // Freshness — all three silos' engine state fresh + Deduction's toggles/UI at launch default
       // (dates are random, so excluded). Reported up so App's isFullyReset accounts for Deduction.
