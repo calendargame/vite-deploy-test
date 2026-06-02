@@ -1,6 +1,6 @@
 import './index.css' // Tailwind (v3, compiled in-build) + the app's custom CSS — replaces the old Play-CDN <script> + inline <style>.
 import * as React from 'react'
-import ErrorBoundary from './ErrorBoundary'
+import ErrorBoundary, { ModeErrorBoundary } from './ErrorBoundary'
 // The original loaded the full ReactDOM UMD global, which exposes BOTH createRoot and
 // createPortal. The modern modular build splits them: createRoot is in 'react-dom/client',
 // createPortal is in 'react-dom'. Reconstruct a ReactDOM with both so the app's
@@ -1990,13 +1990,28 @@ const ReactDOM = { createRoot, createPortal }
               (display:none toggle on visible prop, not conditional rendering) and its internal
               state would otherwise persist across resets. See aoxResetKey declaration upstream
               for full rationale. */}
-          <AoxMode key={aoxResetKey} minY={minY} maxY={maxY} visible={mode==="aox"} fmtDate={fmtDate} useJulian={useJulian} genDate={genDate} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} randomFormat={randomFormat} dateFormat={dateFormat} saveStats={saveStats} onFreshChange={setAoxIsFresh}/>
-          <ClassicMode key={"classic-"+classicResetKey} visible={mode==="classic"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setClassicIsFresh}/>
-          <FlashMode key={"flash-"+flashResetKey} visible={mode==="flash"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setFlashIsFresh}/>
-          <BlitzMode key={"blitz-"+blitzResetKey} visible={mode==="blitz"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setBlitzIsFresh}/>
-          <DeductionMode key={"deduction-"+deductionResetKey} visible={mode==="deduction"} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} onFreshChange={setDeductionIsFresh}/>
-          {mode==="lookup"&&(<div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div>)}
-          {mode==="guide"&&(<div className="mt-2.5"><GuidePage/></div>)}
+          {/* Per-mode error boundaries (ModeErrorBoundary): a crash in one mode is isolated —
+              the bar + switcher + other modes keep working. The mode's reset key lives on the
+              BOUNDARY now (not the inner component) so Full Reset remounts boundary+component
+              together (clearing any caught error AND resetting the component's state). The
+              always-mounted modes pass `active` so a hidden mode's crash paints nothing. */}
+          <ModeErrorBoundary key={"aox-"+aoxResetKey} mode="AoX" active={mode==="aox"}>
+            <AoxMode minY={minY} maxY={maxY} visible={mode==="aox"} fmtDate={fmtDate} useJulian={useJulian} genDate={genDate} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} randomFormat={randomFormat} dateFormat={dateFormat} saveStats={saveStats} onFreshChange={setAoxIsFresh}/>
+          </ModeErrorBoundary>
+          <ModeErrorBoundary key={"classic-"+classicResetKey} mode="Classic" active={mode==="classic"}>
+            <ClassicMode visible={mode==="classic"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setClassicIsFresh}/>
+          </ModeErrorBoundary>
+          <ModeErrorBoundary key={"flash-"+flashResetKey} mode="Flash" active={mode==="flash"}>
+            <FlashMode visible={mode==="flash"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setFlashIsFresh}/>
+          </ModeErrorBoundary>
+          <ModeErrorBoundary key={"blitz-"+blitzResetKey} mode="Blitz" active={mode==="blitz"}>
+            <BlitzMode visible={mode==="blitz"} genDate={genDate} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} fmtDate={fmtDate} onFreshChange={setBlitzIsFresh}/>
+          </ModeErrorBoundary>
+          <ModeErrorBoundary key={"deduction-"+deductionResetKey} mode="Deduction" active={mode==="deduction"}>
+            <DeductionMode visible={mode==="deduction"} minY={minY} maxY={maxY} useJulian={useJulian} saveStats={saveStats} dateFormat={dateFormat} randomFormat={randomFormat} leapChance={leapChance} janFebChance={janFebChance} julianChance={julianChance} onFreshChange={setDeductionIsFresh}/>
+          </ModeErrorBoundary>
+          {mode==="lookup"&&(<ModeErrorBoundary mode="Lookup" active={true}><div className="mt-5"><LookupCard history={lookupHistory} onAddHistory={pushLookupHistory} onMoveHistory={moveHistoryEntryToTop} onClearHistory={clearLookupHistory} inputValue={lookupInput} onInputChange={setLookupInput} outputValue={lookupOutput} onOutputChange={setLookupOutput} calcDate={lookupCalcDate} onCalcDateChange={setLookupCalcDate} selectedHistoryId={lookupSelectedHistoryId} onSelectedHistoryIdChange={setLookupSelectedHistoryId} calcOpen={lookupCalcOpen} onCalcOpenChange={setLookupCalcOpen} fmtDate={fmtDate} dateFormat={dateFormat} useJulian={useJulian}/></div></ModeErrorBoundary>)}
+          {mode==="guide"&&(<ModeErrorBoundary mode="How to Play" active={true}><div className="mt-2.5"><GuidePage/></div></ModeErrorBoundary>)}
         </div>
         </div>
         </>

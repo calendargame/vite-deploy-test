@@ -65,3 +65,52 @@ export default class ErrorBoundary extends Component {
     )
   }
 }
+
+// Per-mode safety net. Each always-mounted mode component is wrapped in one of these so a
+// crash in a single mode is ISOLATED — the bar, the mode switcher, and the other modes keep
+// working instead of the whole app dropping to the full-screen ErrorBoundary above. Two design
+// points:
+//   • `active`: the in-flow fallback only renders when THIS mode is the visible one. A crash in
+//     a hidden (display:none) always-mounted mode renders nothing, so it can't paint an error
+//     card on top of the mode you're actually using.
+//   • keyed by the mode's reset key in App: Full Reset bumps that key, remounting this boundary
+//     fresh (clearing the error) along with the mode component — so Full Reset also recovers a
+//     crashed mode, on top of the explicit Reload button.
+// Uses the app's own theme classes (a logic crash doesn't take out the already-loaded CSS).
+export class ModeErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error, info) {
+    console.error(`Calendar Game: the "${this.props.mode}" mode crashed:`, error, info)
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children
+    if (!this.props.active) return null
+    return (
+      <div className="mt-5 rounded-2xl card p-6 text-center space-y-3">
+        <div className="text-3xl" aria-hidden="true">
+          😵
+        </div>
+        <div className="text-sm font-medium text-purple-100/90">This mode hit an unexpected error.</div>
+        <div className="text-xs text-purple-300/70 leading-relaxed">
+          Switch to another mode from the menu above, use Full Reset in&nbsp;⚙, or reload the page.
+        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 rounded-xl btn-solid border border-transparent text-white text-sm font-medium"
+        >
+          Reload
+        </button>
+      </div>
+    )
+  }
+}
