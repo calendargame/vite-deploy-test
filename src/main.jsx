@@ -237,6 +237,16 @@ const ReactDOM = { createRoot, createPortal }
     // Timing constants (keep in sync with CSS .expander transition)
     // CODES_CLOSE_MS → src/lib/constants.js, imported at top (shared with the codes panel).
     const FLASH_MS=550;       // green/red button flash duration (ms)
+    // Button-pulse flash (the green/red pulse on an answered option) — transient UI, not engine
+    // state. Every mode component owns one; this hook is the single copy. Latest-timeout pattern
+    // so rapid answers each get the full FLASH_MS before clearing. `setFlash` is exposed for the
+    // few sites that clear it directly (e.g. Deduction's sub-type switch).
+    function useButtonFlash(){
+      const [flash,setFlash]=useState(null);
+      const flashClearRef=useRef(null);
+      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      return {flash,setFlash,setFlashWithTimeout};
+    }
 
     // computeHasCredit, markBtns, mkBtnsWithCorrect → src/engine/answerButtons.js, imported at top.
 
@@ -515,10 +525,7 @@ const ReactDOM = { createRoot, createPortal }
       const prevBestSnapRef=useRef(null);     // {key,best} snapshotted when this run set a Best, for rollback
       const bestData=bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
 
-      // Transient green/red button flash — UI only.
-      const [flash,setFlash]=useState(null);
-      const flashClearRef=useRef(null);
-      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
       // Frozen date for the codes panel during the close animation (same as the other modes).
       const latestAoxDateRef=useRef(null);
@@ -710,11 +717,7 @@ const ReactDOM = { createRoot, createPortal }
       const {state,correct,overrideAvail}=eng;
       const S=state.stats;
       const sLast=calcLast(S.times),sAvg=calcAvg(S.times),sMed=calcMed(S.times);
-      // Button flash (green/red pulse) is transient UI, not engine state — kept here, same
-      // latest-timeout pattern as App/AoxMode so rapid answers each get the full duration.
-      const [flash,setFlash]=useState(null);
-      const flashClearRef=useRef(null);
-      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
       const optionsDisabled=state.locked||state.calcOpen||state.calcPenaltyActive;
       const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
@@ -840,9 +843,7 @@ const ReactDOM = { createRoot, createPortal }
       const {state,correct,overrideAvail}=eng;
       const S=state.stats;
       const sLast=calcLast(S.times),sAvg=calcAvg(S.times),sMed=calcMed(S.times);
-      const [flash,setFlash]=useState(null);
-      const flashClearRef=useRef(null);
-      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
       const resetFlashBar=()=>{if(flashBarRef.current){flashBarRef.current.style.transition="none";flashBarRef.current.style.width="100%";}};
       const startFlashBar=ms=>{requestAnimationFrame(()=>{if(!flashBarRef.current)return;const s=flashBarRef.current;s.style.transition="none";s.style.width="100%";s.getBoundingClientRect();s.style.transition=`width ${ms}ms linear`;s.style.width="0%";});};
@@ -1016,9 +1017,7 @@ const ReactDOM = { createRoot, createPortal }
       const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff:false}); // Blitz: timing always tracked
       const {state,correct,overrideAvail}=eng;
       const S=state.stats;
-      const [flash,setFlash]=useState(null);
-      const flashClearRef=useRef(null);
-      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
       // Per-config Best silos (mirrors App's getBlitzBk / getSuddenBk keys exactly).
       const blitzBk=`${allowMistakes?'m':'n'}${blitzSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
@@ -1240,11 +1239,9 @@ const ReactDOM = { createRoot, createPortal }
       const S=state.stats;
       const sLast=calcLast(S.times),sAvg=calcAvg(S.times),sMed=calcMed(S.times);
 
-      // Flash (green/red pulse) on the active grid — component-owned UI (like ClassicMode). Only
-      // one grid is visible at a time, so a single flash state suffices (no per-sub-mode `kind`).
-      const [flash,setFlash]=useState(null);
-      const flashClearRef=useRef(null);
-      const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
+      // One flash for the active grid (only one sub-mode visible at a time). setFlash is cleared
+      // directly on sub-type switch (changeDedType), so it's destructured alongside the pulse setter.
+      const {flash,setFlash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
       const fmtDatePartial=(y,m,d,storedFmt,missing)=>fmtPartial(y,m,d,storedFmt||dateFormat,missing);
       const centerLastOpt=(index,total)=>{if(total<=0)return"";if(index===total-1&&total%3===1)return"col-span-3";return"";};
