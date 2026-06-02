@@ -172,7 +172,7 @@ export function gameReducer(state, action) {
     // mark, burn the question, no advance. `elapsed` is the solve time (component-timed);
     // `tracking` is trackingOn() (record times only when timing is visible).
     case 'ANSWER': {
-      const { idx, useJulian, elapsed, tracking, saveStats, nextDate } = action
+      const { idx, useJulian, elapsed, tracking, saveStats, nextDate, complete } = action
       if (state.locked) return state
       const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
@@ -202,6 +202,13 @@ export function gameReducer(state, action) {
         const finalBtns = state.countedWrong
           ? mkBtnsWithCorrect(state.persistBtns, correct)
           : { [correct]: 'correct' }
+        // `complete` (AoX's Nth/last solve): credit the answer but DON'T advance — mark the grid,
+        // lock it, and STAY on the question so it can be reviewed + reversed via Override (Path 2).
+        // canOverrideCorrect / prevStatsSnapshot from the credit above are preserved. Only AoX
+        // passes `complete`; the one-question-loop modes always advance after a correct.
+        if (complete && !state.countedWrong) {
+          return { ...next, persistBtns: finalBtns, locked: true }
+        }
         return advance(next, { nextDate, useJulian, finalBtns, saved: effective })
       }
 
@@ -367,7 +374,7 @@ export function gameReducer(state, action) {
     // dispatched when overrideAvail (Save Stats on + a path armed + not used this Q), so
     // stat updates apply unconditionally here. Paths are checked 1→5; first match wins.
     case 'OVERRIDE': {
-      const { useJulian, tracking, timingOff, nextDate } = action
+      const { useJulian, tracking, timingOff, nextDate, noAdvance } = action
       const correct = correctIndexOf(state.date, useJulian)
       const s0 = { ...state, overrideUsedThisQ: true } // setOverrideUsedThisQ(true) at top
 
@@ -418,7 +425,9 @@ export function gameReducer(state, action) {
           const wd = correctIndexOf(last, useJulian)
           s = { ...s, stack: [...s.stack.slice(0, -1), { ...last, btns: { [wd]: 'correct' }, overrideUsed: true }] }
         }
-        if (!timingOff) {
+        // `noAdvance` (AoX): reversing the completing solve fails the run (Allow Mistakes off) —
+        // stay on the question instead of advancing, so the component can lock it as failed.
+        if (!timingOff && !noAdvance) {
           s = advance(s, { nextDate, useJulian, saved: true })
           if (s.stack.length)
             s = { ...s, stack: [...s.stack.slice(0, -1), { ...s.stack[s.stack.length - 1], overrideUsed: true }] }

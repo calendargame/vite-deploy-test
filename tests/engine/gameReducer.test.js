@@ -299,3 +299,42 @@ describe('gameReducer — RESET_ROUND', () => {
     expect(s.date).toBe(DATE) // date kept
   })
 })
+
+// The two general flags AoX adds (Stage C, Step 5 fold). `complete` = credit-and-stay (the run's
+// last solve); `noAdvance` = override-without-advancing (the failing reversal of that solve). The
+// one-question-loop modes never pass either, so their behavior is unchanged (regressions below).
+describe('gameReducer — complete (AoX last solve) + noAdvance (AoX failing override)', () => {
+  it('ANSWER complete: credits the correct answer but does NOT advance — marks, locks, stays, reversible', () => {
+    const s = answer(initEngine(DATE), C, { complete: true, elapsed: 0.5, tracking: true })
+    expect(s.stats).toEqual({ played: 1, good: 1, streak: 1, best: 1, times: [0.5] }) // credited
+    expect(s.date).toBe(DATE) // stayed (NOT advanced to NEXT)
+    expect(s.persistBtns).toEqual({ [C]: 'correct' }) // answer marked
+    expect(s.locked).toBe(true) // run is over → grid locked
+    expect(s.stack).toEqual([]) // not pushed — the completing solve is the live (reviewable) question
+    expect(s.canOverrideCorrect).toBe(true) // still reversible via Override
+    expect(s.prevStatsSnapshot).not.toBe(null)
+  })
+
+  it('ANSWER without complete still advances (regression: the other modes are unchanged)', () => {
+    const s = answer(initEngine(DATE), C)
+    expect(s.date).toBe(NEXT) // advanced
+    expect(s.locked).toBe(false)
+    expect(s.stack).toHaveLength(1)
+  })
+
+  it('OVERRIDE noAdvance: reverses the completing solve without advancing (run fails in place)', () => {
+    let s = answer(initEngine(DATE), C, { complete: true, elapsed: 0.5, tracking: true })
+    s = gameReducer(s, {
+      type: 'OVERRIDE', useJulian: false, tracking: true, timingOff: false, noAdvance: true, nextDate: NEXT,
+    })
+    expect(s.stats.good).toBe(0) // credit reversed
+    expect(s.stats.played).toBe(1) // the attempt still counts
+    expect(s.date).toBe(DATE) // stayed — the component marks the run failed
+  })
+
+  it('OVERRIDE without noAdvance (timing on) advances after reversing (the Classic/Blitz path is intact)', () => {
+    let s = answer(initEngine(DATE), C, { complete: true, elapsed: 0.5, tracking: true })
+    s = gameReducer(s, { type: 'OVERRIDE', useJulian: false, tracking: true, timingOff: false, nextDate: NEXT })
+    expect(s.date).toBe(NEXT) // advanced
+  })
+})

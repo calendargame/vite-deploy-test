@@ -55,12 +55,17 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   // Actions are recreated each render (they close over the latest settings, which is what we
   // want); they read the timer from a ref, so there's no stale-closure hazard.
   const newDate = () => genDate(minY, maxY)
-  const answer = (idx) =>
-    dispatch({ type: 'ANSWER', idx, useJulian, elapsed: elapsed(), tracking, saveStats, nextDate: newDate() })
+  // `opts.complete` (AoX): credit this correct answer but don't advance — the run's last solve
+  // stays on screen, locked + reversible. Other modes call answer(idx) → complete undefined.
+  const answer = (idx, opts) =>
+    dispatch({ type: 'ANSWER', idx, useJulian, elapsed: elapsed(), tracking, saveStats, nextDate: newDate(), complete: opts?.complete })
   const reveal = () => dispatch({ type: 'REVEAL', useJulian, elapsed: elapsed(), saveStats })
   const showCodes = (open) => dispatch({ type: 'SHOW_CODES', open, useJulian, elapsed: elapsed(), saveStats })
   const doNew = () => dispatch({ type: 'NEW', useJulian, saveStats, nextDate: newDate() })
-  const override = () => dispatch({ type: 'OVERRIDE', useJulian, tracking, timingOff, nextDate: newDate() })
+  // `opts.noAdvance` (AoX): when an override reverses the run's completing solve and fails the run
+  // (Allow Mistakes off), don't advance — stay on the question. Other modes call override().
+  const override = (opts) =>
+    dispatch({ type: 'OVERRIDE', useJulian, tracking, timingOff, nextDate: newDate(), noAdvance: opts?.noAdvance })
   const back = () => dispatch({ type: 'BACK' })
   const forward = () => dispatch({ type: 'FORWARD', useJulian })
   const resetStats = () => dispatch({ type: 'RESET', timingOff, nextDate: newDate() })
