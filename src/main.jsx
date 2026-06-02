@@ -25,7 +25,6 @@ import { computeStreaks } from './engine/streak.js'
 import { calcAvg, calcLast, calcMed } from './engine/stats.js'
 import { computeHasCredit, markBtns, mkBtnsWithCorrect, entryWithGreen } from './engine/answerButtons.js'
 import { useGameEngine } from './engine/useGameEngine.js'
-import { useAoxEngine } from './engine/useAoxEngine.js'
 const ReactDOM = { createRoot, createPortal }
 
     const {useEffect,useMemo,useRef,useState,useCallback,useLayoutEffect} = React;
@@ -237,7 +236,7 @@ const ReactDOM = { createRoot, createPortal }
       if(good<played&&pct>=99.95)return"99.9%";
       return`${pct.toFixed(1)}%`;
     };
-    // calcAvg / calcLast / calcMed → src/engine/stats.js, imported at top (shared with aoxReducer).
+    // calcAvg / calcLast / calcMed → src/engine/stats.js, imported at top (shared by the mode strips).
     const blockMinus=e=>{if(e.key==="-"||e.key==="Subtract"||e.key==="Minus")e.preventDefault();};
     const blockMinusBI=e=>{if(e.data&&e.data.includes("-"))e.preventDefault();};
 
@@ -487,124 +486,163 @@ const ReactDOM = { createRoot, createPortal }
     // CustomSelect → src/components/CustomSelect.jsx, imported at top.
 
     // ============================================================
-    // AoxMode — the AoX game mode on its OWN clean engine (mode-untangle Step 5).
-    //
-    // AoX is a genuinely different game (a timed RUN of N solves with averaging), so rather than
-    // forcing it into the shared gameReducer it has its own pure, unit-tested engine built the
-    // SAME way as the others: useAoxEngine + aoxReducer, sharing every common building block
-    // (answerButtons / streak / stats / activeWday). This component is now thin: the run config
-    // toggles (Ao size, Allow Mistakes, One-By-One), the transient flash, the codes frozen-date
-    // animation, and the display — all the run/override/history/best logic lives in the reducer.
-    // Self-contained + always-mounted (display:none when inactive), like the other mode components.
-    // ============================================================
+    // AoxMode — the "average of N" run mode, FOLDED onto the shared useGameEngine (mode-untangle
+    // Step 5, redone). Like Blitz, the engine runs the per-question loop (answer / credit / stats /
+    // history / Override / Show Codes) and the COMPONENT owns the run layer: the run lifecycle
+    // (idle/running/done/failed), the Ao-N count, Best Average/Median (per config, with rollback),
+    // One-By-One, and the fail-on-mistake rule. The run's stats ARE the engine stats — good =
+    // credited solves, played = attempts, times = solve times, streak/best. The fold needs only
+    // two general engine flags: `complete` (the Nth solve credits without advancing) and
+    // `noAdvance` (a failing override of that solve stays put). See gameReducer.
     function AoxMode({minY,maxY,visible,fmtDate,useJulian=false,genDate=randomDate,leapChance='random',janFebChance='random',julianChance='random',randomFormat=false,dateFormat='written-mdy',saveStats=true,onFreshChange}){
       const [aoxN,setAoxN]=useState("10");
       const [allowMistakes,setAllowMistakes]=useState(false);
       const [oneByOne,setOneByOne]=useState(false);
+      const [runPhase,setRunPhase]=useState("idle");   // idle | running | done | failed (the RUN; the engine just runs the per-question loop)
+      const [shown,setShown]=useState(false);           // One-By-One: is the current date revealed? (always true for non-One-By-One while running)
       const n=Math.max(2,Math.min(1000,parseInt(aoxN)||10));
-      // Best keying: bests are siloed per difficulty configuration so a Best Average achieved at
-      // one config doesn't compare against runs at a different config. Dimensions: n (Ao size),
-      // allowMistakes, format (random→'random' bucket, else the specific id), leapChance,
-      // janFebChance, year range, useJulian.
+      // Best keying: bests are siloed per difficulty configuration. Dimensions: n, allowMistakes,
+      // format (random→'random' bucket), leapChance, janFebChance, year range, useJulian.
       const bestKey=`${n}|${allowMistakes}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${minY}-${maxY}|${useJulian}`;
-      const eng=useAoxEngine({genDate,minY,maxY,useJulian,saveStats,n,allowMistakes,oneByOne,bestKey});
+      // saveStats:true ALWAYS → the run tracks + completes regardless of the global Save Stats
+      // setting (which only dims the display + gates recording a Best). timingOff:false → solve
+      // times are recorded for the average.
+      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats:true,timingOff:false});
       const {state,correct}=eng;
+      const S=state.stats;
+      const doneCount=S.good;                 // credited solves this run
+      const isRunning=runPhase==="running";
+      const isLocked=runPhase==="done"||runPhase==="failed";
+      const inBack=state.backDepth>0;
 
-      // Transient button flash (green/red pulse) — UI only, not engine state. Latest-timeout
-      // pattern so rapid answers each get the full duration.
+      // Per-config Best Average / Median (component-owned, like Blitz's Best Score). A run records
+      // its Best on completion; an Override that undoes the completing solve rolls it back, gated
+      // to the run that set it via the run id.
+      const [bests,setBests]=useState({});
+      const [bestNew,setBestNew]=useState({});
+      const nextRunIdRef=useRef(1);
+      const currentRunIdRef=useRef(null);
+      const prevBestSnapRef=useRef(null);     // {key,best} snapshotted when this run set a Best, for rollback
+      const bestData=bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+
+      // Transient green/red button flash — UI only.
       const [flash,setFlash]=useState(null);
       const flashClearRef=useRef(null);
       const setFlashWithTimeout=val=>{setFlash(val);if(flashClearRef.current)clearTimeout(flashClearRef.current);flashClearRef.current=setTimeout(()=>{setFlash(null);flashClearRef.current=null;},FLASH_MS);};
 
-      // Frozen date for the codes panel: during the close animation keep showing the old codes;
-      // update to the new date only after the close finishes.
+      // Frozen date for the codes panel during the close animation (same as the other modes).
       const latestAoxDateRef=useRef(null);
       const wasCodesOpenRef=useRef(false);
       const [aoxFrozenDate,setAoxFrozenDate]=useState(()=>({...state.date}));
       latestAoxDateRef.current=state.date;
       useEffect(()=>{
-        if(state.codesOpen){wasCodesOpenRef.current=true;setAoxFrozenDate(state.date);return;}
+        if(state.calcOpen){wasCodesOpenRef.current=true;setAoxFrozenDate(state.date);return;}
         if(wasCodesOpenRef.current){wasCodesOpenRef.current=false;const t=setTimeout(()=>setAoxFrozenDate(latestAoxDateRef.current),CODES_CLOSE_MS);return()=>clearTimeout(t);}
         else{setAoxFrozenDate(state.date);}
-      },[state.codesOpen,state.date.y,state.date.m,state.date.d]);
+      },[state.calcOpen,state.date.y,state.date.m,state.date.d]);
 
-      // Reset the run when the panel is hidden mid-run (matches the old AoxMode visibility effect).
-      useEffect(()=>{if(!visible&&state.runPhase==="running")eng.reset();/* eslint-disable-line react-hooks/exhaustive-deps */},[visible]);
+      // Record this run's Best Average/Median (on completion). Compares against the closure
+      // `bests[bestKey]` (the best before this run) and snapshots it for a later rollback.
+      const applyBest=(times)=>{
+        const avg=calcAvg(times),med=calcMed(times),rid=currentRunIdRef.current;
+        const cur=bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+        prevBestSnapRef.current={key:bestKey,best:{...cur}};
+        const avgImp=cur.avg==null||avg<cur.avg,medImp=cur.med==null||med<cur.med;
+        setBests(p=>({...p,[bestKey]:{
+          avg:avgImp?avg:cur.avg,avgMed:avgImp?med:cur.avgMed,avgRoundId:avgImp?rid:cur.avgRoundId,
+          med:medImp?med:cur.med,medAvg:medImp?avg:cur.medAvg,medRoundId:medImp?rid:cur.medRoundId,
+        }}));
+        if(avgImp||medImp)setBestNew(p=>{const e=p[bestKey]||{avg:false,med:false};return{...p,[bestKey]:{avg:e.avg||avgImp,med:e.med||medImp}};});
+      };
+      // Restore the Best to its pre-run value when an Override undoes the run that set it.
+      const rollbackBest=()=>{
+        const snap=prevBestSnapRef.current;
+        if(!snap||snap.key!==bestKey)return;
+        setBests(p=>({...p,[bestKey]:{...snap.best}}));
+        setBestNew(p=>{const nx={...p};delete nx[bestKey];return nx;});
+        prevBestSnapRef.current=null;
+      };
 
-      // Auto-reset/regen on a settings change. Running → any change resets the round. Idle → regen
-      // the displayed date on a content change (Julian-only keeps it; current useJulian flows
-      // through naturally). Done/failed → never auto-replace the displayed last question. (eng.reset
-      // in idle just reloads the date + keeps bests, == the old setDate regen.) Mirrors the old
-      // prevAoxPopRef effect / App's regenDecisionFor.
+      // The run completes when the credited count reaches N: flip to done + record a Best (if Save
+      // Stats on). The completing answer used eng.answer(...,{complete}) so the engine stayed on the
+      // solve; this just transitions the phase. Re-entry is guarded by runPhase.
+      useEffect(()=>{
+        if(runPhase!=="running"||doneCount<n)return;
+        setRunPhase("done");
+        if(saveStats)applyBest(S.times);
+      },[doneCount,runPhase,n,saveStats]);/* eslint-disable-line react-hooks/exhaustive-deps */
+
+      // Reset the run if the panel is hidden mid-run.
+      useEffect(()=>{if(!visible&&runPhase==="running"){eng.resetStats();setRunPhase("idle");setShown(false);}/* eslint-disable-line react-hooks/exhaustive-deps */},[visible]);
+
+      // Auto-reset/regen on a settings change. Running → reset the run; idle → regen the hidden
+      // date on a content change (Julian-only keeps it); done/failed → leave the ended run alone.
       const prevAoxPopRef=useRef({randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance});
       useEffect(()=>{
         const prev=prevAoxPopRef.current;
-        const dateFormatChanged=prev.dateFormat!==dateFormat;
-        const randomFormatChanged=prev.randomFormat!==randomFormat;
-        const leapChanceChanged=prev.leapChance!==leapChance;
-        const janFebChanceChanged=prev.janFebChance!==janFebChance;
-        const julianChanceChanged=prev.julianChance!==julianChance;
-        const yearRangeChanged=prev.minY!==minY||prev.maxY!==maxY;
+        const contentChanged=prev.dateFormat!==dateFormat||prev.randomFormat!==randomFormat||prev.leapChance!==leapChance||prev.janFebChance!==janFebChance||prev.julianChance!==julianChance||prev.minY!==minY||prev.maxY!==maxY;
         const julianChanged=prev.useJulian!==useJulian;
         prevAoxPopRef.current={randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance};
-        const anyChanged=dateFormatChanged||randomFormatChanged||leapChanceChanged||janFebChanceChanged||julianChanceChanged||yearRangeChanged||julianChanged;
-        if(!anyChanged)return;
-        if(state.runPhase==='running'){eng.reset();return;}
-        if(state.runPhase!=='idle')return;
-        if(leapChanceChanged||randomFormatChanged||dateFormatChanged||janFebChanceChanged||julianChanceChanged||yearRangeChanged){eng.reset();}
-        // idle + Julian-only change: keep the date (current useJulian flows through to codes/answer).
-      },[randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance,eng,state.runPhase]);
+        if(!contentChanged&&!julianChanged)return;
+        if(runPhase==="running"){eng.resetStats();setRunPhase("idle");setShown(false);return;}
+        if(runPhase!=="idle")return;
+        if(contentChanged)eng.regenDate();
+      },[randomFormat,dateFormat,useJulian,minY,maxY,leapChance,janFebChance,julianChance,runPhase,eng]);
 
-      // Freshness — true iff every AoX field is at its launch default (the date is random, so
-      // excluded). Reported to App so isFullyReset can dim the Full Reset button.
-      const aoxIsFreshLocal=aoxN==="10"&&allowMistakes===false&&oneByOne===false&&state.runPhase==="idle"&&state.shown===false&&state.inBackMode===false&&state.stack.length===0&&state.forwardStack.length===0&&state.times.length===0&&state.streak===0&&state.bestStreak===0&&state.attempts===0&&flash===null&&Object.keys(state.persistBtns).length===0&&state.codesOpen===false&&state.canOverrideCorrect===false&&Object.keys(state.bests).length===0&&Object.keys(state.bestNew).length===0&&state.pendingWrongCredit===null&&state.overrideUsed===false&&state.browseHasCredit===false&&state.questionCounted===false;
+      // Freshness for App's isFullyReset (the random date is excluded).
+      const aoxIsFreshLocal=aoxN==="10"&&allowMistakes===false&&oneByOne===false&&runPhase==="idle"&&shown===false&&S.played===0&&S.good===0&&S.streak===0&&S.best===0&&S.times.length===0&&state.stack.length===0&&state.forwardStack.length===0&&state.backDepth===0&&flash===null&&Object.keys(state.persistBtns).length===0&&state.calcOpen===false&&state.canOverrideCorrect===false&&Object.keys(bests).length===0&&Object.keys(bestNew).length===0&&state.pendingWrongOverride===null&&state.overrideUsedThisQ===false&&state.countedWrong===false;
       useEffect(()=>{onFreshChange&&onFreshChange(aoxIsFreshLocal);},[aoxIsFreshLocal,onFreshChange]);
 
-      // Derived UI state (from the engine state + the run config).
-      const isRunning=state.runPhase==="running";
-      const isLocked=state.runPhase==="done"||state.runPhase==="failed";
-      const dateVisible=state.runPhase==="failed"||state.runPhase==="done"||(isRunning&&(!oneByOne||state.shown))||state.inBackMode;
-      const revealLocked=!isRunning||isLocked||state.codesOpen||(oneByOne&&!state.shown)||state.inBackMode;
-      const backDisabled=state.stack.length===0||state.runPhase==="idle"||state.runPhase==="running";
-      const aoxRetroOverrideEligible=(
-        isRunning && !state.inBackMode &&
-        Object.keys(state.persistBtns).length===0 &&
-        !state.codesOpen && !state.canOverrideCorrect &&
-        state.pendingWrongCredit==null &&
-        state.stack.length>0 &&
-        !state.stack[state.stack.length-1].overrideUsed &&
-        state.stack[state.stack.length-1].capsule?.snapshot!=null
-      );
-      const overrideAvail=saveStats&&!state.overrideUsed&&(
-        (isRunning&&(Object.keys(state.persistBtns).length>0||state.codesOpen||state.canOverrideCorrect||state.pendingWrongCredit!=null))||
-        (state.runPhase==="failed")||
-        (state.runPhase==="done"&&state.canOverrideCorrect)||
-        aoxRetroOverrideEligible
-      );
-      const codesDisabled=state.runPhase==="idle"||(oneByOne&&!state.shown&&!state.inBackMode&&!isLocked);
-      const optionsDisabled=isLocked||state.codesOpen||(oneByOne&&!state.shown&&!state.inBackMode)||state.runPhase==="idle"||state.inBackMode;
+      // Derived UI state.
+      const dateVisible=isLocked||(isRunning&&(!oneByOne||shown))||inBack;
+      const revealLocked=!isRunning||state.calcOpen||(oneByOne&&!shown)||inBack;
+      const backDisabled=state.stack.length===0||runPhase==="idle"||runPhase==="running";
+      const fwdDisabled=state.forwardStack.length===0||runPhase==="idle"||runPhase==="running";
+      const last=state.stack[state.stack.length-1];
+      // Override availability mirrors the shared engine's (Save Stats off locks it).
+      const overrideAvail=saveStats&&!state.overrideUsedThisQ&&(state.countedWrong||state.canOverrideCorrect||state.pendingWrongOverride!=null||eng.retroOverrideEligible);
+      const codesDisabled=runPhase==="idle"||(oneByOne&&!shown&&!inBack&&!isLocked);
+      const optionsDisabled=isLocked||state.calcOpen||(oneByOne&&!shown&&!inBack)||runPhase==="idle"||inBack;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
-      const bestData=state.bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
-      const doneCount=state.times.length;
-      const scoreDisplay=state.runPhase==="idle"?"0/0":`${doneCount}/${state.attempts}`;
-      const accuracyDisplay=fmtAccuracyPct(doneCount,state.attempts);
+      const scoreDisplay=runPhase==="idle"?"0/0":`${doneCount}/${S.played}`;
+      const accuracyDisplay=fmtAccuracyPct(doneCount,S.played);
       const date=state.date;
 
-      // Handlers — thin wrappers over the engine + the transient flash.
-      const submitDoW=i=>{setFlashWithTimeout({type:i===correct?"good":"bad",idx:i});eng.answer(i);};
-      const startOrContinue=()=>{if(state.runPhase==="idle")eng.begin();else eng.continueRun();};
-      const onOverride=()=>{
-        // Cosmetic green flash when crediting a wrong on the current question (AoX Path 5, non-completing).
-        if((state.runPhase==="running"||state.runPhase==="failed")&&!state.inBackMode&&!state.canOverrideCorrect&&state.pendingWrongCredit==null&&!aoxRetroOverrideEligible&&state.questionCounted&&state.times.length+1<state.displayN)setFlashWithTimeout({type:"good",idx:correct});
-        eng.override();
+      // Handlers.
+      const begin=()=>{eng.resetStats();currentRunIdRef.current=nextRunIdRef.current++;prevBestSnapRef.current=null;setRunPhase("running");setShown(true);};
+      const continueRun=()=>{setShown(true);eng.restartTimer();};   // One-By-One: reveal the already-loaded next date + start its solve timer
+      const startOrContinue=()=>{if(runPhase==="idle")begin();else continueRun();};
+      const submitDoW=i=>{
+        setFlashWithTimeout({type:i===correct?"good":"bad",idx:i});
+        const willComplete=i===correct&&!state.countedWrong&&doneCount===n-1;   // the Nth credited solve completes the run
+        const willAdvance=i===correct&&!willComplete;                            // a non-completing correct (first-try or late) advances
+        eng.answer(i,{complete:willComplete});
+        if(i!==correct&&!allowMistakes){eng.lockReveal();setRunPhase("failed");} // wrong + no mistakes → reveal the answer + fail the run
+        else if(willAdvance&&oneByOne)setShown(false);                           // One-By-One: hide the freshly-loaded next date until Continue
       };
+      const onReveal=()=>{eng.reveal();if(!allowMistakes)setRunPhase("failed");};
+      const onShowCodes=()=>{const open=!state.calcOpen;eng.showCodes(open);if(open&&!allowMistakes&&isRunning)setRunPhase("failed");};
+      const onOverride=()=>{
+        const reverseCompleting=state.canOverrideCorrect&&!state.countedWrong&&!inBack;                 // Path 2: reverse the live completing solve
+        const reverseToWrong=reverseCompleting&&state.prevStatsSnapshot&&!state.prevStatsSnapshot.wasWrong;
+        const retroToWrong=eng.retroOverrideEligible&&last?.capsule?.snapshot&&!last.capsule.snapshot.wasWrong; // Path 5: retro-flip a correct entry to wrong
+        const crediting=state.countedWrong||state.pendingWrongOverride!=null;                           // Path 3/4: credit a wrong
+        const toWrong=reverseToWrong||retroToWrong;
+        const failNow=toWrong&&!allowMistakes;
+        if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});   // crediting the current wrong → green flash
+        eng.override({noAdvance:reverseCompleting&&failNow});
+        if(reverseCompleting)rollbackBest();                                     // the completing solve may have set this run's Best
+        if(failNow)setRunPhase("failed");                                        // a to-wrong override with no mistakes fails the run (bug #2 / unified rule)
+        else if(crediting&&runPhase==="failed")setRunPhase("running");           // crediting the wrong that failed the run resumes it
+        else if(reverseCompleting&&allowMistakes)setRunPhase("running");         // Allow Mistakes on: reversing the completing solve resumes the run
+      };
+      const reset=()=>{eng.resetStats();setRunPhase("idle");setShown(false);setBestNew({});prevBestSnapRef.current=null;currentRunIdRef.current=null;};
 
-      const primaryBtn=state.runPhase==="idle"
+      const primaryBtn=runPhase==="idle"
         ?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Begin</button>)
-        :state.runPhase==="done"&&state.inBackMode?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={eng.reset}>Reset</button>)
-        :isLocked?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={eng.reset}>Reset</button>)
-        :state.inBackMode||(!state.shown&&oneByOne)?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Continue</button>)
-        :(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={eng.reset}>Reset</button>);
+        :isLocked?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>)
+        :(!shown&&oneByOne)?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Continue</button>)
+        :(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>);
 
       return(
         <div style={{display:visible?"block":"none"}}>
@@ -612,36 +650,36 @@ const ReactDOM = { createRoot, createPortal }
           <div className={saveStats?"":"opacity-50"}><StatPanel stats={[
             {label:"Score",value:scoreDisplay,off:!saveStats,fn:null},
             {label:"Accuracy",value:accuracyDisplay,off:!saveStats,fn:null},
-            {label:"Streak",value:`${state.streak}/${state.bestStreak}`,off:!saveStats,fn:null},
-            {label:"Last",value:truncTime(calcLast(state.times)),off:!saveStats,fn:null},
-            {label:"Average",value:fmtTime(calcAvg(state.times)),off:!saveStats,fn:null},
-            {label:"Median",value:fmtTime(calcMed(state.times)),off:!saveStats,fn:null},
+            {label:"Streak",value:`${S.streak}/${S.best}`,off:!saveStats,fn:null},
+            {label:"Last",value:truncTime(calcLast(S.times)),off:!saveStats,fn:null},
+            {label:"Average",value:fmtTime(calcAvg(S.times)),off:!saveStats,fn:null},
+            {label:"Median",value:fmtTime(calcMed(S.times)),off:!saveStats,fn:null},
           ]}/></div>
           <div className="mt-3 text-xs text-purple-300/60">
             <div className="flex flex-wrap items-start gap-4">
               <div className="min-w-[125px]">
-                <div>Best Average: {fmtTime(bestData.avg)}{state.bestNew[bestKey]?.avg&&<NewBestStar/>}</div>
+                <div>Best Average: {fmtTime(bestData.avg)}{bestNew[bestKey]?.avg&&<NewBestStar/>}</div>
                 <div className="text-[11px] opacity-70">Median: {fmtTime(bestData.avgMed)}</div>
               </div>
               <div className="min-w-[125px]">
-                <div>Best Median: {fmtTime(bestData.med)}{state.bestNew[bestKey]?.med&&<NewBestStar/>}</div>
+                <div>Best Median: {fmtTime(bestData.med)}{bestNew[bestKey]?.med&&<NewBestStar/>}</div>
                 <div className="text-[11px] opacity-70">Average: {fmtTime(bestData.medAvg)}</div>
               </div>
               {bestData.avgRoundId!=null&&bestData.medRoundId!=null&&<span className="shrink-0 ml-auto">{bestData.avgRoundId===bestData.medRoundId?"Same Round":"Different Rounds"}</span>}
             </div>
           </div>
           <div className="mt-3 flex items-center gap-2 flex-nowrap">
-            <div className="flex items-center shrink-0"><span className={`text-sm leading-none text-purple-200/80${state.runPhase!=="idle"?" opacity-60":""}`}>Ao</span><input type="text" inputMode="numeric" readOnly={state.runPhase!=="idle"} value={aoxN} onChange={e=>{if(state.runPhase==="idle")setAoxN(e.target.value);}} onBlur={()=>setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))));e.currentTarget.blur();}else if(e.key==="Escape"){setAoxN(String(state.displayN));e.currentTarget.blur();}}} className={`panel rounded-xl px-2 py-1 w-14 text-center tabular-nums text-sm focus:outline-hidden shrink-0${state.runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}/></div>
-            <button type="button" onClick={()=>{if(state.runPhase==="idle")setAllowMistakes(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${state.runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
-            <button type="button" onClick={()=>{if(state.runPhase==="idle")setOneByOne(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${oneByOne?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${state.runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>One-By-One</button>
+            <div className="flex items-center shrink-0"><span className={`text-sm leading-none text-purple-200/80${runPhase!=="idle"?" opacity-60":""}`}>Ao</span><input type="text" inputMode="numeric" readOnly={runPhase!=="idle"} value={aoxN} onChange={e=>{if(runPhase==="idle")setAoxN(e.target.value);}} onBlur={()=>setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();setAoxN(String(Math.max(2,Math.min(1000,parseInt(aoxN)||10))));e.currentTarget.blur();}else if(e.key==="Escape"){setAoxN(String(n));e.currentTarget.blur();}}} className={`panel rounded-xl px-2 py-1 w-14 text-center tabular-nums text-sm focus:outline-hidden shrink-0${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}/></div>
+            <button type="button" onClick={()=>{if(runPhase==="idle")setAllowMistakes(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${allowMistakes?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>Allow Mistakes</button>
+            <button type="button" onClick={()=>{if(runPhase==="idle")setOneByOne(v=>!v);}} className={`flex-1 px-2 py-1 rounded-xl text-xs font-medium border ${oneByOne?"btn-solid border-transparent":"surface-toggle text-purple-100/80"}${runPhase!=="idle"?" opacity-60 pointer-events-none":""}`}>One-By-One</button>
           </div>
           <div className="mt-4 rounded-2xl panel p-4">
             <div className="text-center relative">
-              {(state.inBackMode||state.runPhase==="done"||state.runPhase==="failed")&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{state.stack.length+1}</span>}
+              {(inBack||isLocked)&&<span className="absolute right-0 top-0 text-[11px] tabular-nums text-purple-300/60">Q{state.stack.length+1}</span>}
               <div className="text-3xl font-bold">{dateVisible?fmtDate(date.y,date.m,date.d,date._fmt):"—"}</div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3" data-answer-grid="true">
-              {DAY.map((nm,i)=>{const last=i===DAY.length-1?"col-span-2":"";const ps=state.persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",'surface-button');const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={nm} type="button" onClick={()=>{if(perLocked)return;submitDoW(i);}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${last}`}>{nm}</button>);})}
+              {DAY.map((nm,i)=>{const lastCol=i===DAY.length-1?"col-span-2":"";const ps=state.persistBtns[i];const isFlashing=!!(flash&&flash.idx===i);const bCls=buttonStateClass(ps,isFlashing,flash&&flash.type==="good",'surface-button');const perLocked=!!ps;const shouldDim=optionsDisabled&&!ps&&!isFlashing;return(<button key={nm} type="button" onClick={()=>{if(perLocked)return;submitDoW(i);}} className={`${baseBtn} ${bCls} ${(perLocked||optionsDisabled)?"pointer-events-none":""} ${shouldDim?"opacity-60":""} ${lastCol}`}>{nm}</button>);})}
             </div>
           </div>
           <div className="mt-4 rounded-2xl panel p-3 space-y-3">
@@ -649,13 +687,13 @@ const ReactDOM = { createRoot, createPortal }
               {primaryBtn}
               <div className="col-span-1 flex gap-1">
                 <button type="button" data-key="ArrowLeft" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${backDisabled?"opacity-60 pointer-events-none":""}`} onClick={eng.back}><span style={{position:'relative',top:'-1.5px'}}>&lt;</span></button>
-                <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${(state.forwardStack.length===0||state.runPhase==="idle"||state.runPhase==="running")?"opacity-60 pointer-events-none":""}`} onClick={eng.forward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
+                <button type="button" data-key="ArrowRight" className={`flex-1 px-1 py-2 rounded-xl border surface-button text-sm font-medium flex items-center justify-center ${fwdDisabled?"opacity-60 pointer-events-none":""}`} onClick={eng.forward}><span style={{position:'relative',top:'-1.5px'}}>&gt;</span></button>
               </div>
-              <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealLocked?"opacity-60 pointer-events-none":""}`} onClick={eng.reveal}>Reveal</button>
+              <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealLocked?"opacity-60 pointer-events-none":""}`} onClick={onReveal}>Reveal</button>
               <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
             </div>
-            <button type="button" data-key="C" className={`w-full px-4 py-2 rounded-xl btn-solid text-sm font-medium ${codesDisabled&&!state.inBackMode?"opacity-60 pointer-events-none":""}`} onClick={eng.showCodes}>{state.codesOpen?"Hide Codes":"Show Codes"}</button>
-            <Expander open={state.codesOpen}><div className="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5"><MethodExplanation date={aoxFrozenDate} useJulian={state.inBackMode?(aoxFrozenDate?._jul??useJulian):useJulian} displayedFormat={aoxFrozenDate?._fmt||dateFormat}/></div></Expander>
+            <button type="button" data-key="C" className={`w-full px-4 py-2 rounded-xl btn-solid text-sm font-medium ${codesDisabled&&!inBack?"opacity-60 pointer-events-none":""}`} onClick={onShowCodes}>{state.calcOpen?"Hide Codes":"Show Codes"}</button>
+            <Expander open={state.calcOpen}><div className="mt-3 rounded-2xl thin px-4 pt-[3px] pb-1.5"><MethodExplanation date={aoxFrozenDate} useJulian={inBack?(aoxFrozenDate?._jul??useJulian):useJulian} displayedFormat={aoxFrozenDate?._fmt||dateFormat}/></div></Expander>
           </div>
         </div>
       );

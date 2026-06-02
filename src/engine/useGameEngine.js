@@ -27,6 +27,12 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
     tStartRef.current = performance.now()
   }, [state.questionId])
   const elapsed = () => (tStartRef.current != null ? (performance.now() - tStartRef.current) / 1000 : null)
+  // Restart the solve timer without changing the question — AoX One-By-One reveals the next date
+  // on Continue (the date was loaded earlier, hidden), so the solve time must run from the reveal,
+  // not from when it loaded. Other modes never call it (the questionId effect covers them).
+  const restartTimer = () => {
+    tStartRef.current = performance.now()
+  }
 
   const tracking = !timingOff // Classic: timing visible ⇒ record solve times into stats.times
   // The correct answer index — weekday for Classic/Flash/Blitz, puzzle option for Deduction
@@ -98,5 +104,6 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
     resetRound,
     lockReveal,
     timeoutMiss,
+    restartTimer,
   }
 }

@@ -402,3 +402,35 @@ describe('AoX — characterization (batch 6: Reveal + Show Codes)', () => {
     expect(ctrl('Hide Codes')).toBeInTheDocument() // panel open
   })
 })
+
+// ── Batch 7: bug #2 fix — override-to-wrong fails the run (Allow Mistakes off) ───
+// The deliberate fix (the unified session-end rule, applied at the component level by the fold):
+// with Allow Mistakes off, flipping a correct answer to wrong via Override is a mistake and must
+// FAIL the run — exactly like a wrong answer. Previously the retro-flip path didn't. The batch-3
+// Override tests use Allow Mistakes ON precisely to avoid this, so they don't cover it.
+describe('AoX — bug #2 fix (override-to-wrong fails the run, Allow Mistakes off)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pin()
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('retro-flipping a credited answer to wrong fails the run (locks the grid)', () => {
+    mountApp()
+    switchToAox()
+    setN(3) // Allow Mistakes is OFF by default
+    click('Begin')
+    answerCorrect() // 1/1, advances to a fresh live question; the credited entry is now retro-overridable
+    expect(statValue('Score')).toBe('1/1')
+    expect(isDisabled(ctrl('Override'))).toBe(false)
+    click('Override') // retro-flip the credited answer to wrong
+    expect(statValue('Score')).toBe('0/1') // credit removed
+    expect(statValue('Streak')).toBe('0/0')
+    expect(isDisabled(dayBtn('Sunday'))).toBe(true) // run FAILED → grid locked (the bug: it used to stay running)
+  })
+})
