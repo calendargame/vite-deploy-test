@@ -2,6 +2,7 @@ import * as React from 'react'
 import Expander from './Expander.jsx'
 import { computeMethodSummary } from '../lib/method.js'
 import { CODES_CLOSE_MS } from '../lib/constants.js'
+import type { FormatId } from '../lib/format.js'
 
 // MethodExplanation + MethodBreakdownSection — the "Show Codes" panel.
 //
@@ -14,16 +15,32 @@ import { CODES_CLOSE_MS } from '../lib/constants.js'
 // for CODES_CLOSE_MS while it slides shut. Shared by App, AoxMode, and LookupCard.
 //
 // Extracted from main.jsx in Stage C, Step 4g (verbatim).
+
+// The minimal date a code panel reads (the question's y/m/d). Callers pass richer
+// objects (full questions / puzzles); only these three fields are consumed.
+export interface CodeDate {
+  y: number
+  m: number
+  d: number
+}
+// The per-date code summary shape, taken from computeMethodSummary's inferred return.
+type MethodSummary = NonNullable<ReturnType<typeof computeMethodSummary>>
+
 export function MethodExplanation({
   date,
   useJulian = false,
   displayedFormat = 'written-mdy',
   cellDates = null,
+}: {
+  date?: CodeDate | null
+  useJulian?: boolean
+  displayedFormat?: FormatId
+  cellDates?: CodeDate[] | null
 }) {
-  const summaries = React.useMemo(() => {
+  const summaries: MethodSummary[] = React.useMemo(() => {
     if (cellDates && cellDates.length > 0)
-      return cellDates.map((cd) => computeMethodSummary(cd, true)).filter((s) => s != null)
-    return date ? [computeMethodSummary(date, useJulian)].filter((s) => s != null) : []
+      return cellDates.map((cd) => computeMethodSummary(cd, true)).filter((s): s is MethodSummary => s != null)
+    return date ? [computeMethodSummary(date, useJulian)].filter((s): s is MethodSummary => s != null) : []
   }, [cellDates, date?.y, date?.m, date?.d, useJulian])
   if (summaries.length === 0)
     return (
@@ -31,7 +48,7 @@ export function MethodExplanation({
     )
   // Collapse-when-same: gather each code's values across all interpretations,
   // dedup via Set (preserves insertion order), and join with slashes if 2+ unique.
-  const joinDedup = (vals) => {
+  const joinDedup = (vals: Array<string | number>) => {
     const s = [...new Set(vals.map((v) => String(v)))]
     return s.join('/')
   }
@@ -41,7 +58,7 @@ export function MethodExplanation({
   const cdCode = joinDedup(summaries.map((s) => s.cdCode))
   const leapValue = joinDedup(summaries.map((s) => String(s.leapCode)))
   const calendarText = joinDedup(summaries.map((s) => s.calendarSystem)) + ' Calendar'
-  const codeMap = {
+  const codeMap: Record<string, { label: string; italic: boolean; value: string }> = {
     Month: { label: 'Month', italic: false, value: monthCode },
     Day: { label: 'Day', italic: false, value: dayCode },
     ab: { label: 'ab', italic: true, value: abCode },
@@ -51,7 +68,7 @@ export function MethodExplanation({
   // Order the codes left-to-right matching the date format's reading order.
   // After both year and month appear, Leap is placed.
   const fmt = displayedFormat || 'written-mdy'
-  let order
+  let order: string[]
   if (fmt === 'numeric-ymd') order = ['ab', 'cd', 'Month', 'Leap', 'Day']
   else if (fmt === 'written-dmy' || fmt === 'numeric-dmy')
     order = ['Day', 'Month', 'ab', 'cd', 'Leap']
@@ -83,6 +100,15 @@ export function MethodBreakdownSection({
   useJulian = false,
   displayedFormat = 'written-mdy',
   cellDates = null,
+}: {
+  date?: CodeDate | null
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  className?: string
+  contentClassName?: string
+  useJulian?: boolean
+  displayedFormat?: FormatId
+  cellDates?: CodeDate[] | null
 }) {
   const isControlled = typeof controlledOpen === 'boolean' && typeof onOpenChange === 'function'
   const [internalOpen, setInternalOpen] = React.useState(false)
@@ -118,13 +144,13 @@ export function MethodBreakdownSection({
   React.useEffect(() => {
     if (hasDate) return
     if (isControlled) {
-      if (controlledOpen) onOpenChange(false)
+      if (controlledOpen) onOpenChange?.(false)
     } else setInternalOpen(false)
   }, [hasDate, isControlled, controlledOpen, onOpenChange])
-  const open = hasDate ? (isControlled ? controlledOpen : internalOpen) : false
+  const open = hasDate ? (isControlled ? !!controlledOpen : internalOpen) : false
   const toggle = () => {
     if (!hasDate) return
-    if (isControlled) onOpenChange(!open)
+    if (isControlled) onOpenChange?.(!open)
     else setInternalOpen((v) => !v)
   }
   // Content-derived key for cellDates so identity-unstable inline-built arrays in the

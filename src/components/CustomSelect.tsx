@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 // CustomSelect — the app's custom dropdown, replacing the native <select>.
@@ -23,6 +23,18 @@ import { createPortal } from 'react-dom'
 //
 // Extracted from main.jsx in Stage C, Step 4d (verbatim; the only change is
 // ReactDOM.createPortal → the directly-imported createPortal — same function).
+
+export interface CustomSelectOption {
+  value: string
+  label: ReactNode
+}
+// Measured viewport coordinates for the portaled panel: right edge always pinned,
+// and exactly one of top (opening down) / bottom (flipping up).
+interface PanelPos {
+  right: number
+  top?: number
+  bottom?: number
+}
 export default function CustomSelect({
   value,
   onChange,
@@ -33,26 +45,36 @@ export default function CustomSelect({
   wrapperRef,
   showChevron = false,
   openUp = false,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: CustomSelectOption[]
+  className?: string
+  wrapperClassName?: string
+  ariaLabel?: string
+  wrapperRef?: RefObject<HTMLDivElement | null>
+  showChevron?: boolean
+  openUp?: boolean
 }) {
   const [open, setOpen] = useState(false)
   // activeIdx tracks the keyboard-highlighted option (≠ selected value). -1 when nothing is
   // highlighted (e.g. mouse-only interaction). Reset to selected option's index on open so
   // ↑/↓ start from the current value, not the top.
   const [activeIdx, setActiveIdx] = useState(-1)
-  const localRef = useRef(null)
+  const localRef = useRef<HTMLDivElement>(null)
   const ref = wrapperRef || localRef
-  const triggerRef = useRef(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const listboxId = useRef(`cs-list-${Math.random().toString(36).slice(2, 9)}`).current
-  const optionId = (i) => `${listboxId}-opt-${i}`
+  const optionId = (i: number) => `${listboxId}-opt-${i}`
   const selectedIdx = options.findIndex((o) => o.value === value)
   // panelRef points at the PORTALED panel so the click-outside handler can
   // treat taps inside it as "inside" (the panel is no longer a DOM descendant
   // of the wrapper). openUpwardRef holds the flip decision as a ref (not state)
   // so measurePanel can read it synchronously within the same toggle that sets
   // it. panelPos holds the measured viewport coordinates for the portal.
-  const panelRef = useRef(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const openUpwardRef = useRef(false)
-  const [panelPos, setPanelPos] = useState(null)
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(null)
   // measurePanel reads the trigger's current viewport rect and writes panelPos:
   // right edge aligned to the trigger, 6px below it (top) when opening down, or
   // 6px above it (bottom) when flipping up. Called on open and on scroll/resize
@@ -99,14 +121,14 @@ export default function CustomSelect({
     setActiveIdx(-1)
     if (triggerRef.current) triggerRef.current.focus()
   }
-  const selectAt = (i) => {
+  const selectAt = (i: number) => {
     if (i < 0 || i >= options.length) return
     onChange(options[i].value)
     closeAndFocus()
   }
   // Trigger keyboard handler — opens dropdown with ↑/↓/Enter/Space, then arrow nav happens
   // via the document-level handler below (set up only when open). Standard listbox pattern.
-  const handleTriggerKeyDown = (e) => {
+  const handleTriggerKeyDown = (e: React.KeyboardEvent) => {
     if (open) {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -143,30 +165,23 @@ export default function CustomSelect({
   }
   useEffect(() => {
     if (!open) return
-    const h = (e) => {
-      if (!ref.current || ref.current.contains(e.target)) return
+    const h = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Element | null
+      if (!ref.current || ref.current.contains(target)) return
       // The panel is portaled out of the wrapper, so a tap on an option is NOT
       // contained by ref.current — without this, the mousedown/touchstart handler
       // would close the dropdown before the option's click (selection) fired.
-      if (panelRef.current && panelRef.current.contains(e.target)) return
+      if (panelRef.current && panelRef.current.contains(target)) return
       // Ignore mousedowns that landed in a scrollbar (Windows native scrollbars register
       // mousedown on the scrolling element itself). Without this, dragging the Settings
       // popover's scrollbar while a dropdown inside it is open closes the dropdown.
-      const t = e.target
+      const t = target
       if (t && t.nodeType === 1) {
         const r = t.getBoundingClientRect()
-        if (
-          t.scrollHeight > t.clientHeight &&
-          e.clientX != null &&
-          e.clientX > r.left + t.clientWidth
-        )
-          return
-        if (
-          t.scrollWidth > t.clientWidth &&
-          e.clientY != null &&
-          e.clientY > r.top + t.clientHeight
-        )
-          return
+        const cx = 'clientX' in e ? e.clientX : null
+        const cy = 'clientY' in e ? e.clientY : null
+        if (t.scrollHeight > t.clientHeight && cx != null && cx > r.left + t.clientWidth) return
+        if (t.scrollWidth > t.clientWidth && cy != null && cy > r.top + t.clientHeight) return
       }
       setOpen(false)
     }
@@ -284,7 +299,8 @@ export default function CustomSelect({
               </button>
             ))}
           </div>,
-          document.getElementById('root'),
+          // #root is the app's mount node — always present once the app has rendered.
+          document.getElementById('root')!,
         )}
     </div>
   )

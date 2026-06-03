@@ -1,7 +1,40 @@
 import * as React from 'react'
 import { fmt, MONTH, DAY, numericFormatOf } from '../lib/format.js'
 import { dim, wday, wdayJulian, isJulianDate, isGapDate } from '../lib/calendar.js'
-import { MethodBreakdownSection } from './MethodBreakdown.jsx'
+import { MethodBreakdownSection, type CodeDate } from './MethodBreakdown.jsx'
+import type { FormatId } from '../lib/format.js'
+
+// A Lookup history entry: parsed date (y/m/d) + rendered label, weekday, full result.
+// isGap marks an Oct 5-14, 1582 gap (Does Not Exist) entry.
+export interface LookupEntry {
+  id: string
+  label: string
+  weekday: string
+  result: string
+  y: number
+  m: number
+  d: number
+  isGap?: boolean
+}
+interface LookupCardProps {
+  history?: LookupEntry[]
+  onAddHistory?: (entry: LookupEntry) => void
+  onMoveHistory?: (id: string) => void
+  onClearHistory?: () => void
+  inputValue?: string
+  onInputChange?: (value: string) => void
+  outputValue?: string
+  onOutputChange?: (value: string) => void
+  calcDate?: CodeDate | null
+  onCalcDateChange?: (date: CodeDate | null) => void
+  selectedHistoryId?: string | null
+  onSelectedHistoryIdChange?: (id: string | null) => void
+  calcOpen?: boolean
+  onCalcOpenChange?: (open: boolean) => void
+  fmtDate?: (y: number, m: number, d: number) => string
+  dateFormat?: FormatId
+  useJulian?: boolean
+}
 
 // LookupCard — the Lookup-mode card: a numeric date input (format follows the
 // active dateFormat), a scrollable history list (up to 10 before scrolling, with
@@ -30,7 +63,7 @@ export default function LookupCard({
   fmtDate,
   dateFormat = 'written-mdy',
   useJulian = false,
-}) {
+}: LookupCardProps) {
   const li = typeof inputValue === 'string' ? inputValue : String(inputValue ?? '')
   const sli = typeof onInputChange === 'function' ? onInputChange : () => {}
   const lo = typeof outputValue === 'string' ? outputValue : String(outputValue ?? '')
@@ -46,7 +79,7 @@ export default function LookupCard({
   //   lookupHistoryAtBottom        → bottom fade + MethodBreakdown shadow (up)
   // Defaults: scrolledFromTop false, atBottom true. ResizeObserver covers the case
   // where the list grows from 9→10 entries while the user is viewing it.
-  const lookupHistoryRef = React.useRef(null)
+  const lookupHistoryRef = React.useRef<HTMLUListElement>(null)
   const [lookupHistoryAtBottom, setLookupHistoryAtBottom] = React.useState(true)
   const [lookupHistoryScrolledFromTop, setLookupHistoryScrolledFromTop] = React.useState(false)
   React.useEffect(() => {
@@ -72,9 +105,9 @@ export default function LookupCard({
   // date becomes null (e.g., clicking a "Does Not Exist" gap entry). Earlier per-entry
   // tracking via calcOpenByEntry was removed because it made codes auto-close on
   // every history click that landed on an entry whose codes had never been opened.
-  const sco = typeof onCalcOpenChange === 'function' ? (next) => onCalcOpenChange(!!next) : () => {}
-  const lastLookupRef = React.useRef(null)
-  const lookupInputRef = React.useRef(null)
+  const sco = typeof onCalcOpenChange === 'function' ? (next: boolean) => onCalcOpenChange?.(!!next) : () => {}
+  const lastLookupRef = React.useRef<string | null>(null)
+  const lookupInputRef = React.useRef<HTMLInputElement>(null)
   // LookupCard uses module-level isLeap/dim/wday/numericFormatOf — no local duplicates.
   // Map any selected dateFormat to its corresponding Numeric format for input parsing.
   const numericFmtForInput = numericFormatOf(dateFormat)
@@ -104,7 +137,7 @@ export default function LookupCard({
     const s = li.trim()
     // Build regex based on the input format. Year accepts 1–5 digits, month/day 1–2 digits.
     const sepEsc = inputMeta.sep === '.' ? '\\.' : inputMeta.sep === '-' ? '-' : '/'
-    let match
+    let match: RegExpExecArray | null
     if (inputMeta.orderType === 'ymd')
       match = new RegExp(`^(\\d{1,5})${sepEsc}(\\d{1,2})${sepEsc}(\\d{1,2})$`).exec(s)
     else match = new RegExp(`^(\\d{1,2})${sepEsc}(\\d{1,2})${sepEsc}(\\d{1,5})$`).exec(s)
@@ -114,7 +147,7 @@ export default function LookupCard({
       lookupInputRef.current?.focus()
       return
     }
-    let mm, dd, yy
+    let mm: number, dd: number, yy: number
     if (inputMeta.orderType === 'ymd') {
       yy = +match[1]
       mm = +match[2]
@@ -231,7 +264,7 @@ export default function LookupCard({
   // numeric (per the input's contract; the displayed history label may be written), so
   // populate using the numeric form of the selected dateFormat regardless of how the
   // history row reads.
-  const selEntry = (entry) => {
+  const selEntry = (entry: LookupEntry) => {
     if (!entry) return
     ssid(entry.id)
     slo(entry?.result || '')
@@ -244,7 +277,7 @@ export default function LookupCard({
     const renderedLabel =
       typeof entry.y === 'number' ? fmt(entry.y, entry.m, entry.d, numericFmtForInput) : entry.label
     if (typeof renderedLabel === 'string') sli(renderedLabel)
-    if (document.activeElement) document.activeElement.blur()
+    if (document.activeElement) (document.activeElement as HTMLElement).blur()
   }
   const clearHist = () => {
     if (onClearHistory) onClearHistory()
@@ -273,7 +306,7 @@ export default function LookupCard({
     }
     return lo
   }, [sid, entries, useJulian, fmtDate, lo])
-  const getEntryWeekday = (e) => {
+  const getEntryWeekday = (e: LookupEntry) => {
     if (e.isGap) return 'Does Not Exist'
     if (typeof e.y === 'number' && isJulianDate(e.y, e.m, e.d)) {
       const wd = useJulian ? wdayJulian(e.y, e.m, e.d) : wday(e.y, e.m, e.d)
@@ -296,8 +329,8 @@ export default function LookupCard({
   // When an input IS focused, all keys pass through unchanged so typing & native cursor
   // handling (including ↑/↓ jumping cursor to start/end on single-line inputs) work normally.
   React.useEffect(() => {
-    const h = (e) => {
-      const ae = document.activeElement
+    const h = (e: KeyboardEvent) => {
+      const ae = document.activeElement as HTMLElement | null
       const inInput =
         ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)
       if (inInput) return

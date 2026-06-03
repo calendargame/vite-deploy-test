@@ -1,4 +1,4 @@
-import { useRef, useLayoutEffect } from 'react'
+import { useRef, useLayoutEffect, type ReactNode } from 'react'
 
 // Expander — animates its children open/closed by tweening max-height.
 //
@@ -12,12 +12,12 @@ import { useRef, useLayoutEffect } from 'react'
 //
 // Extracted from main.jsx in Stage C, Step 4a (verbatim; only the React-hook
 // imports were added, since this is now its own module).
-export default function Expander({ open, children }) {
-  const outerRef = useRef(null)
-  const innerRef = useRef(null)
+export default function Expander({ open, children }: { open: boolean; children?: ReactNode }) {
+  const outerRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
   const prevOpenRef = useRef(open)
   const mountedRef = useRef(false)
-  const resizeObsRef = useRef(null)
+  const resizeObsRef = useRef<ResizeObserver | null>(null)
   useLayoutEffect(() => {
     const el = outerRef.current
     if (!el) return
@@ -30,11 +30,12 @@ export default function Expander({ open, children }) {
         resizeObsRef.current.disconnect()
         resizeObsRef.current = null
       }
+      const inner = innerRef.current
       const obs = new ResizeObserver(() => {
         if (!outerRef.current || !innerRef.current) return
         outerRef.current.style.maxHeight = innerRef.current.scrollHeight + 16 + 'px'
       })
-      obs.observe(innerRef.current)
+      obs.observe(inner)
       resizeObsRef.current = obs
     }
     if (!mountedRef.current) {

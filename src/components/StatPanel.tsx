@@ -1,3 +1,5 @@
+import type { ElementType, ReactNode, Ref } from 'react'
+
 // StatPanel — the horizontal stats strip (Score / Accuracy / Streak / Last /
 // Average / Median) shown under the header in the timed/scored modes.
 //
@@ -17,12 +19,25 @@
 // It's required: Tailwind v4's source scanner silently drops any utility glued
 // directly to `${` when that class appears nowhere else, which made the stat
 // labels wrap. Don't "tidy" the space away. (Calendar Game layout bug-fix, 2026-06-01.)
-export default function StatPanel({ stats, armedSpan }) {
+export interface StatItem {
+  label: string
+  value: string | number
+  fn?: () => void
+  off?: boolean
+}
+export interface ArmedSpan {
+  startIdx: number
+  endIdx: number
+  label: ReactNode
+  onClick?: () => void
+  btnRef?: Ref<HTMLButtonElement>
+}
+export default function StatPanel({ stats, armedSpan }: { stats: StatItem[]; armedSpan?: ArmedSpan }) {
   // For fractional values (Score, Streak as "X/Y"), shrink the value font
   // when either side reaches 1000+ or 10000+ to prevent overflow on long
   // sessions. Non-fractional values (Accuracy, Last, Average, Median)
   // stay at default size — they don't grow this way in practice.
-  const sizeForValue = (val) => {
+  const sizeForValue = (val: string | number) => {
     const s = String(val)
     if (!s.includes('/')) return 'text-sm'
     const sideMax = Math.max(...s.split('/').map((p) => p.length))
@@ -33,7 +48,7 @@ export default function StatPanel({ stats, armedSpan }) {
   return (
     <div className="mt-4 rounded-2xl panel flex overflow-hidden">
       {(() => {
-        const items = []
+        const items: ReactNode[] = []
         for (let i = 0; i < stats.length; i++) {
           if (armedSpan && i === armedSpan.startIdx) {
             const span = armedSpan.endIdx - armedSpan.startIdx + 1
@@ -77,8 +92,8 @@ export default function StatPanel({ stats, armedSpan }) {
             continue
           }
           const s = stats[i]
-          const Tag = s.fn ? 'button' : 'div'
-          const props = s.fn ? { type: 'button', onClick: s.fn } : {}
+          const Tag: ElementType = s.fn ? 'button' : 'div'
+          const props = s.fn ? { type: 'button' as const, onClick: s.fn } : {}
           const sz = sizeForValue(s.value)
           items.push(
             <Tag
