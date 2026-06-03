@@ -351,7 +351,7 @@ interface SuddenBest { score: number; roundId: number | null }
 
 
 
-    const DEPLOY_TS=new Date('2026-06-02T05:22:00Z');
+    const DEPLOY_TS=new Date('2026-06-03T13:35:49Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
