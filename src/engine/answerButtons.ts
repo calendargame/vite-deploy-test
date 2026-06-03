@@ -11,10 +11,27 @@
 // both import them (the reducer can't import from main.jsx — that'd be circular).
 // ─────────────────────────────────────────────────────────────────────────
 import { isJulianDate, wday, wdayJulian } from '../lib/calendar.js'
+import type { DatePart } from '../lib/format.js'
+
+// A single answer-grid button's state, and the index→state map for a question.
+export type ButtonState = 'correct' | 'wrong' | 'wrong-latest' | 'wrong-prev' | 'override-wrong'
+export type Btns = Record<string, ButtonState>
+// A history/answer entry as far as these helpers read it: a weekday date (y/m/d), or a Deduction
+// puzzle (type/options/boxes). The reducer's full Entry type is a superset; extra fields pass through.
+export type EntryLike = {
+  y: number
+  m: number
+  d: number
+  btns?: Btns
+  type?: DatePart
+  options?: number[]
+  boxes?: Array<{ months?: number[] }>
+  _jul?: boolean
+}
 
 // Does this answer state count as a credited (fully-correct) question?
 // True iff a 'correct' is present and no wrong markings remain.
-export const computeHasCredit = (btns) => {
+export const computeHasCredit = (btns: Btns | null | undefined): boolean => {
   if (!btns) return false
   const vals = Object.values(btns)
   return (
@@ -26,7 +43,7 @@ export const computeHasCredit = (btns) => {
 
 // Set button `idx` to `state`, demoting any existing 'wrong-latest' to 'wrong-prev'
 // (so only the newest wrong shows bright red; older ones dim).
-export const markBtns = (btns, idx, state) => {
+export const markBtns = (btns: Btns, idx: number, state: ButtonState): Btns => {
   const next = { ...btns }
   for (const k in next) {
     if (next[k] === 'wrong-latest') next[k] = 'wrong-prev'
@@ -36,7 +53,7 @@ export const markBtns = (btns, idx, state) => {
 }
 
 // markBtns(..., 'correct'): mark idx correct, demoting prior wrongs.
-export const mkBtnsWithCorrect = (btns, idx) => markBtns(btns, idx, 'correct')
+export const mkBtnsWithCorrect = (btns: Btns, idx: number): Btns => markBtns(btns, idx, 'correct')
 
 // Augment a history entry's btns with a synthesized green on the correct answer
 // when the entry has a wrong but no correct. Also downgrades any 'wrong-latest' to
@@ -47,9 +64,9 @@ export const mkBtnsWithCorrect = (btns, idx) => markBtns(btns, idx, 'correct')
 // year uses options.indexOf(y); month uses boxes.findIndex by m (or options.indexOf
 // when no boxes); day uses options.indexOf(d). Non-deduction entries use
 // wday/wdayJulian on (y,m,d).
-export const entryWithGreen = (entry, fallbackJulian) => {
+export const entryWithGreen = (entry: EntryLike | null | undefined, fallbackJulian: boolean): EntryLike | null | undefined => {
   if (!entry) return entry
-  const btns = entry.btns || {}
+  const btns: Btns = entry.btns || {}
   const vals = Object.values(btns)
   const hasCorrect = vals.includes('correct')
   if (hasCorrect) return entry

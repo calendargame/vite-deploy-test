@@ -12,11 +12,8 @@
 // mode-untangle (Stage C, Step 6) as the first carved-out piece of common logic.
 // ─────────────────────────────────────────────────────────────────────────
 
-/**
- * @param {boolean[]} history chronological per-question credit flags
- * @returns {{curStreak:number,bestStreak:number}} trailing streak + longest run
- */
-export function computeStreaks(history) {
+// history: chronological per-question credit flags → trailing streak + longest run anywhere.
+export function computeStreaks(history: boolean[]): { curStreak: number; bestStreak: number } {
   // Current streak: count back from the end until the first non-credit question.
   let curStreak = 0
   for (let i = history.length - 1; i >= 0; i--) {
