@@ -64,7 +64,10 @@ export const mkBtnsWithCorrect = (btns: Btns, idx: number): Btns => markBtns(btn
 // year uses options.indexOf(y); month uses boxes.findIndex by m (or options.indexOf
 // when no boxes); day uses options.indexOf(d). Non-deduction entries use
 // wday/wdayJulian on (y,m,d).
-export const entryWithGreen = (entry: EntryLike | null | undefined, fallbackJulian: boolean): EntryLike | null | undefined => {
+export const entryWithGreen = <T extends EntryLike>(
+  entry: T | null | undefined,
+  fallbackJulian: boolean,
+): T | null | undefined => {
   if (!entry) return entry
   const btns: Btns = entry.btns || {}
   const vals = Object.values(btns)
@@ -91,5 +94,7 @@ export const entryWithGreen = (entry: EntryLike | null | undefined, fallbackJuli
     if (newBtns[k] === 'wrong-latest') newBtns[k] = 'wrong-prev'
   }
   newBtns[correctIdx] = 'correct'
-  return { ...entry, btns: newBtns }
+  // Only `btns` is swapped — every other field passes through untouched, so the result is still
+  // the same shape T. (TS can't verify a generic spread equals T, hence the asserted return.)
+  return { ...entry, btns: newBtns } as T
 }
