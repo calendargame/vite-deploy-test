@@ -25,7 +25,11 @@ export const MONTH = [
   'December',
 ]
 export const DAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-export const fmtYear = (y) => (y > 0 ? String(y) : `${Math.abs(y)} BC`)
+// The five reachable date-format IDs, and the three date pieces a Deduction puzzle can hide.
+// Shared across the app (date objects stamp a _fmt: FormatId; settings store the active one).
+export type FormatId = 'written-mdy' | 'written-dmy' | 'numeric-mdy' | 'numeric-dmy' | 'numeric-ymd'
+export type DatePart = 'day' | 'month' | 'year'
+export const fmtYear = (y: number): string => (y > 0 ? String(y) : `${Math.abs(y)} BC`)
 // fmt: takes a single format ID. The 5 reachable formats:
 //   written-mdy  → April 27, 1828
 //   written-dmy  → 27 April 1828
@@ -33,7 +37,7 @@ export const fmtYear = (y) => (y > 0 ? String(y) : `${Math.abs(y)} BC`)
 //   numeric-dmy  → 27.4.1828
 //   numeric-ymd  → 1828-4-27
 // Convention: numeric MDY uses /, DMY uses ., YMD uses -. Year always full, no leading zeros, no ordinals.
-export const fmt = (y, m, d, formatId = 'written-mdy') => {
+export const fmt = (y: number, m: number, d: number, formatId: FormatId = 'written-mdy'): string => {
   const yr = fmtYear(y)
   switch (formatId) {
     case 'written-dmy':
@@ -54,7 +58,7 @@ export const fmt = (y, m, d, formatId = 'written-mdy') => {
 // piece while honoring the active formatId for the rest. The placeholder
 // is uniform across all pieces and formats — the sub-mode label already
 // tells the user what's missing, so a short uniform marker reads fastest.
-export const fmtPartial = (y, m, d, formatId, missing) => {
+export const fmtPartial = (y: number, m: number, d: number, formatId: FormatId, missing: DatePart): string => {
   const PH = '__'
   const dPart = missing === 'day' ? PH : String(d)
   const mNamePart = missing === 'month' ? PH : MONTH[m - 1]
@@ -76,7 +80,7 @@ export const fmtPartial = (y, m, d, formatId, missing) => {
 }
 // Helper: maps any format ID to its corresponding numeric format ID.
 // Used by Lookup input parsing and DEPLOY_TS (which always render numeric).
-export const numericFormatOf = (fid) => {
+export const numericFormatOf = (fid: FormatId): FormatId => {
   if (fid === 'written-mdy' || fid === 'numeric-mdy') return 'numeric-mdy'
   if (fid === 'written-dmy' || fid === 'numeric-dmy') return 'numeric-dmy'
   return 'numeric-ymd'

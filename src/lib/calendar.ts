@@ -17,23 +17,23 @@
 // Extracted verbatim from main.jsx in Stage C, Step 1. Ordered dependency-first
 // so the module loads cleanly under strict block scoping (no use-before-declare).
 // ─────────────────────────────────────────────────────────────────────────
-export const toAstro = (y) => (y > 0 ? y : 1 - Math.abs(y))
-export const isLeap = (y) => {
+export const toAstro = (y: number): number => (y > 0 ? y : 1 - Math.abs(y))
+export const isLeap = (y: number): boolean => {
   y = toAstro(y)
   return y % 400 === 0 || (y % 4 === 0 && y % 100 !== 0)
 }
-export const isLeapJulian = (y) => {
+export const isLeapJulian = (y: number): boolean => {
   y = toAstro(y)
   return y % 4 === 0
 }
 // dim — days-in-month. Optional julian param switches leap-year rule:
 // off (default) uses Gregorian leap rule (isLeap); on uses Julian (every y%4===0).
 // All non-Julian callers can omit the param and behavior is unchanged.
-export const dim = (y, m, julian = false) => {
+export const dim = (y: number, m: number, julian = false): number => {
   const leap = julian ? isLeapJulian(y) : isLeap(y)
   return m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31
 }
-export function jdnGregorian(y, m, d) {
+export function jdnGregorian(y: number, m: number, d: number): number {
   const a = Math.floor((14 - m) / 12),
     y2 = y + 4800 - a,
     m2 = m - 3 + 12 * a
@@ -47,22 +47,22 @@ export function jdnGregorian(y, m, d) {
     32045
   )
 }
-export const wday = (y, m, d) => (((jdnGregorian(toAstro(y), m, d) + 1) % 7) + 7) % 7
-export function jdnJulian(y, m, d) {
+export const wday = (y: number, m: number, d: number): number => (((jdnGregorian(toAstro(y), m, d) + 1) % 7) + 7) % 7
+export function jdnJulian(y: number, m: number, d: number): number {
   const a = Math.floor((14 - m) / 12),
     y2 = y + 4800 - a,
     m2 = m - 3 + 12 * a
   return d + Math.floor((153 * m2 + 2) / 5) + 365 * y2 + Math.floor(y2 / 4) - 32083
 }
-export const wdayJulian = (y, m, d) => (((jdnJulian(toAstro(y), m, d) + 1) % 7) + 7) % 7
-export const isJulianDate = (y, m, d) =>
+export const wdayJulian = (y: number, m: number, d: number): number => (((jdnJulian(toAstro(y), m, d) + 1) % 7) + 7) % 7
+export const isJulianDate = (y: number, m: number, d: number): boolean =>
   y < 1582 || (y === 1582 && (m < 10 || (m === 10 && d <= 4)))
-export const isGapDate = (y, m, d) => y === 1582 && m === 10 && d >= 5 && d <= 14
+export const isGapDate = (y: number, m: number, d: number): boolean => y === 1582 && m === 10 && d >= 5 && d <= 14
 // Returns true if [lo,hi] contains at least one leap year, evaluated under the active calendar
 // (Julian rule for years <1582 when useJulian is on; Gregorian rule otherwise). Used to lock the
 // Leap Year Chance buttons when no leap year is reachable — without this, setting 50/75/100% would
 // be silently ignored per date with no visible signal that the setting can't take effect.
-export function rangeHasLeapYear(lo, hi, useJulian) {
+export function rangeHasLeapYear(lo: number, hi: number, useJulian: boolean): boolean {
   lo = Math.max(1, lo)
   hi = Math.min(10000, hi)
   if (lo > hi) return false

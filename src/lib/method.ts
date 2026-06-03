@@ -21,7 +21,7 @@ import { DAY } from './format.js'
 // Values >3 are written as their negative equivalent (mod 7): 4→-3, 5→-2, 6→-1.
 // Calculation is unaffected since results mod 7 at the end. Display values match
 // what users learn from the book.
-export const METHOD_MONTH_CODES = {
+export const METHOD_MONTH_CODES: Record<number, number> = {
   1: -1,
   2: 2,
   3: 2,
@@ -111,19 +111,19 @@ export const JULIAN_AB_MAP = new Map([
   [14, -2],
   [15, -3],
 ])
-export const normalizeMod7 = (v) => ((v % 7) + 7) % 7
-export const canonicalizeMod = (v) => {
+export const normalizeMod7 = (v: number): number => ((v % 7) + 7) % 7
+export const canonicalizeMod = (v: number): number => {
   const m = normalizeMod7(v)
   return m > 3 ? m - 7 : m
 }
-export function calcDayCode(d) {
+export function calcDayCode(d: number): number {
   const lo = Math.floor(d / 7) * 7,
     hi = lo + 7,
     fl = d - lo,
     fu = d - hi
   return Math.abs(fu) <= Math.abs(fl) ? fu : fl
 }
-export function calcCdCode(cd) {
+export function calcCdCode(cd: number): number {
   if (METHOD_CD_ADVANCED_ZERO_YEARS.has(cd)) return 0
   let b = METHOD_CD_ADVANCED_LEAP_ORDER[0]
   for (const y of METHOD_CD_ADVANCED_LEAP_ORDER) {
@@ -132,7 +132,7 @@ export function calcCdCode(cd) {
   }
   return canonicalizeMod((METHOD_CD_ADVANCED_LEAP_MAP.get(b) ?? 0) + (cd - b))
 }
-export function yearParts(y) {
+export function yearParts(y: number): { a: number; b: number; cd: number } {
   const f = ((y % 10000) + 10000) % 10000
   return { a: Math.floor(f / 1000), b: Math.floor((f % 1000) / 100), cd: f % 100 }
 }
@@ -141,7 +141,10 @@ export function yearParts(y) {
 // a leap year AND month is January or February (where the leap correction
 // applies in the day-of-week calculation), 0 otherwise. leapYear boolean is
 // kept in the return object too in case future code needs the underlying state.
-export function computeMethodSummary({ y, m, d }, useJulian = false) {
+export function computeMethodSummary(
+  { y, m, d }: { y: number; m: number; d: number },
+  useJulian = false,
+) {
   if (!Number.isFinite(y) || y <= 0) return null
   const mc = METHOD_MONTH_CODES[m] ?? null
   if (mc == null) return null
