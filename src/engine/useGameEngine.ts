@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-// engine/useGameEngine.js — binds the pure gameReducer to React.
+// engine/useGameEngine.ts — binds the pure gameReducer to React.
 //
 // The reducer is pure, so this hook owns the impure inputs it can't compute:
 //   • new dates — via `genDate` passed in by the parent (exactly like AoxMode
@@ -12,21 +12,37 @@
 //
 // Mode-untangle (Stage C, Step 6, sub-step 1c). Classic is the first consumer;
 // Flash/Blitz/Deduction pass their own config when they move onto the engine.
+//
+// useReducer infers `dispatch: Dispatch<GameAction>` from the typed reducer, so
+// every dispatch below is checked against the action union (Stage C, TypeScript).
 // ─────────────────────────────────────────────────────────────────────────
 import { useReducer, useRef, useEffect, useMemo } from 'react'
 import { gameReducer, initEngine, correctIndexOf } from './gameReducer.js'
+import type { Question } from './gameReducer.js'
 
-export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff }) {
+// genDate produces the next question for the active year range (the parent bakes in the
+// format / leap / calendar settings — it's App's genDate, or makeDedPuzzle for Deduction).
+export interface UseGameEngineOptions {
+  genDate: (minY: number, maxY: number) => Question
+  minY: number
+  maxY: number
+  useJulian: boolean
+  saveStats: boolean
+  timingOff: boolean
+}
+
+export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff }: UseGameEngineOptions) {
   const [state, dispatch] = useReducer(gameReducer, undefined, () => initEngine(genDate(minY, maxY)))
 
   // The solve-timer starts when a NEW question is shown (advance / New / Reset bump
   // questionId). Back/Forward change `date` to a browsed entry but leave questionId
   // untouched, so the timer is NOT reset while browsing — matching App's tStartRef.
-  const tStartRef = useRef(null)
+  const tStartRef = useRef<number | null>(null)
   useEffect(() => {
     tStartRef.current = performance.now()
   }, [state.questionId])
-  const elapsed = () => (tStartRef.current != null ? (performance.now() - tStartRef.current) / 1000 : null)
+  const elapsed = (): number | null =>
+    tStartRef.current != null ? (performance.now() - tStartRef.current) / 1000 : null
   // Restart the solve timer without changing the question — AoX One-By-One reveals the next date
   // on Continue (the date was loaded earlier, hidden), so the solve time must run from the reveal,
   // not from when it loaded. Other modes never call it (the questionId effect covers them).
@@ -63,14 +79,14 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   const newDate = () => genDate(minY, maxY)
   // `opts.complete` (AoX): credit this correct answer but don't advance — the run's last solve
   // stays on screen, locked + reversible. Other modes call answer(idx) → complete undefined.
-  const answer = (idx, opts) =>
+  const answer = (idx: number, opts?: { complete?: boolean }) =>
     dispatch({ type: 'ANSWER', idx, useJulian, elapsed: elapsed(), tracking, saveStats, nextDate: newDate(), complete: opts?.complete })
   const reveal = () => dispatch({ type: 'REVEAL', useJulian, elapsed: elapsed(), saveStats })
-  const showCodes = (open) => dispatch({ type: 'SHOW_CODES', open, useJulian, elapsed: elapsed(), saveStats })
+  const showCodes = (open: boolean) => dispatch({ type: 'SHOW_CODES', open, useJulian, elapsed: elapsed(), saveStats })
   const doNew = () => dispatch({ type: 'NEW', useJulian, saveStats, nextDate: newDate() })
   // `opts.noAdvance` (AoX): when an override reverses the run's completing solve and fails the run
   // (Allow Mistakes off), don't advance — stay on the question. Other modes call override().
-  const override = (opts) =>
+  const override = (opts?: { noAdvance?: boolean }) =>
     dispatch({ type: 'OVERRIDE', useJulian, tracking, timingOff, nextDate: newDate(), noAdvance: opts?.noAdvance })
   const back = () => dispatch({ type: 'BACK' })
   const forward = () => dispatch({ type: 'FORWARD', useJulian })
