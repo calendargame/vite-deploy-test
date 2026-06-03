@@ -1,20 +1,27 @@
-import { Component } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
+
+interface ErrorBoundaryProps {
+  children?: ReactNode
+}
+interface ErrorBoundaryState {
+  hasError: boolean
+}
 
 // Top-level safety net. Catches any error thrown while React renders the app and shows a
 // recover card instead of a blank screen. (Covers render errors; async / event-handler errors
 // are a separate concern for later.) Inline styles so the fallback still renders even if the
 // app's CSS / Tailwind failed to load.
-export default class ErrorBoundary extends Component {
-  constructor(props) {
+export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false }
   }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): ErrorBoundaryState {
     return { hasError: true }
   }
 
-  componentDidCatch(error, info) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     // Record it for debugging — never swallow it silently.
     console.error('Calendar Game crashed:', error, info)
   }
@@ -66,6 +73,12 @@ export default class ErrorBoundary extends Component {
   }
 }
 
+interface ModeErrorBoundaryProps {
+  children?: ReactNode
+  active?: boolean
+  mode?: string
+}
+
 // Per-mode safety net. Each always-mounted mode component is wrapped in one of these so a
 // crash in a single mode is ISOLATED — the bar, the mode switcher, and the other modes keep
 // working instead of the whole app dropping to the full-screen ErrorBoundary above. Two design
@@ -77,17 +90,17 @@ export default class ErrorBoundary extends Component {
 //     fresh (clearing the error) along with the mode component — so Full Reset also recovers a
 //     crashed mode, on top of the explicit Reload button.
 // Uses the app's own theme classes (a logic crash doesn't take out the already-loaded CSS).
-export class ModeErrorBoundary extends Component {
-  constructor(props) {
+export class ModeErrorBoundary extends Component<ModeErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ModeErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false }
   }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): ErrorBoundaryState {
     return { hasError: true }
   }
 
-  componentDidCatch(error, info) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(`Calendar Game: the "${this.props.mode}" mode crashed:`, error, info)
   }
 
