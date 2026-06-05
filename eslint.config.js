@@ -33,16 +33,22 @@ export default defineConfig([
       // (e.g. `const {btns, isLive, ...date}=e` in gameReducer's stripEntryMeta); the `^_`
       // pattern still marks any other deliberate discard.
       'no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true }],
-      // React-Compiler hook rules now run at their RECOMMENDED severities (the Stage-D deferral is
-      // over: the React Compiler is enabled in vite.config and every violation was fixed at the
-      // source). The compiler-correctness rules — refs, purity, immutability, set-state-in-effect,
+      // React-Compiler hook rules run at their recommended severities (the Stage-D deferral is over:
+      // the compiler is enabled in vite.config and every violation was fixed at the source). The
+      // compiler-correctness rules — refs, purity, immutability, set-state-in-effect,
       // static-components, preserve-manual-memoization, etc. — are ERRORS via
-      // reactHooks.configs.flat.recommended (extended above), so a regression that makes a
-      // component un-optimizable (and risks a subtle miscompile) now blocks CI. We deliberately do
-      // NOT override exhaustive-deps to error: React keeps it `warn` because it's a heuristic with
-      // known false-positives — more so with the compiler stabilizing functions the linter can't
-      // see — so the handful of genuinely-intentional dep exclusions carry justified inline
-      // disables instead. No per-rule overrides are needed here; the recommended config supplies them.
+      // reactHooks.configs.flat.recommended (extended above), so a regression that makes a component
+      // un-optimizable (and risks a subtle miscompile) blocks CI.
+      // exhaustive-deps is bumped from its recommended `warn` to ERROR too — the site owner wants a
+      // hard 0-errors / 0-warnings bar, so a missing/extra effect dependency must BLOCK CI rather
+      // than linger as a warning. It's a heuristic with known false-positives (more so with the
+      // compiler stabilizing functions the linter can't see), so the few genuinely-intentional
+      // exclusions carry justified inline `eslint-disable … react-hooks/exhaustive-deps` comments.
+      // (The two remaining recommended-`warn` rules — incompatible-library + unsupported-syntax —
+      // are "the compiler skipped optimizing this component" notices, currently silent; left as soft
+      // warnings so a future non-bug can't block the build. Flip them to error if you want it
+      // impossible for any warning to ever appear.)
+      'react-hooks/exhaustive-deps': 'error',
     },
   },
   // TypeScript (.ts/.tsx): the typescript-eslint parser (so ESLint can read TS syntax at all)
