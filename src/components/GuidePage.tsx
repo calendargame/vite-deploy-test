@@ -34,16 +34,22 @@ export function GuideSection({ id, title, children, openId, onToggle }: { id: st
     </div>
   )
 }
-export default function GuidePage() {
-  const [open, setOpen] = useState<string | null>(null)
-  const toggle = useCallback((id: string) => setOpen((o) => (o === id ? null : id)), [])
-  const Divider = ({ label }: { label: string }) => (
+// Section divider with a centered label, placed between GuideSection groups. Defined at
+// module scope (not inside GuidePage) so it's a stable component type across renders —
+// React's compiler flags components created during render. It closes over nothing but
+// its `label` prop, so hoisting is behavior-identical.
+function Divider({ label }: { label: string }) {
+  return (
     <div className="flex items-center gap-2 px-1 pt-1">
       <div className="flex-1 h-px bg-purple-500/20"></div>
       <span className="text-[10px] uppercase tracking-widest text-purple-300/60">{label}</span>
       <div className="flex-1 h-px bg-purple-500/20"></div>
     </div>
   )
+}
+export default function GuidePage() {
+  const [open, setOpen] = useState<string | null>(null)
+  const toggle = useCallback((id: string) => setOpen((o) => (o === id ? null : id)), [])
   return (
     <div className="space-y-2">
       <GuideSection id="overview" title="What Is Calendar Game?" openId={open} onToggle={toggle}>
