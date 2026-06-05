@@ -18,7 +18,12 @@ const root = join(here, '..', '..')
 const outDir = join(root, 'public')
 mkdirSync(outDir, { recursive: true })
 
-const lightSvg = readFileSync(join(here, 'icon-piday-trace.svg'))
+const lightSvg = readFileSync(join(here, 'icon-piday-trace.svg'), 'utf8')
+// The MASKABLE (Android adaptive) variant re-renders the glyph at a REDUCED scale so it stays
+// inside the 40% maskable safe circle (a pure-circle mask would otherwise clip the big glyph).
+// The master's larger scale is kept for the visible icons (iOS apple-touch / "any" / favicon),
+// where the full tile or a generous squircle mask shows the glyph bigger in the home-screen bubble.
+const maskableSvg = lightSvg.replace(/scale\([\d.]+\)/, 'scale(1.9)')
 // Dark home-screen icon is DISABLED — iOS doesn't reliably honor a dark-variant apple-touch-icon
 // (it often needs a remove + re-add, or ignores it entirely), so we ship the single light icon.
 // The dark master SVG is kept. To re-enable: uncomment the 3 dark lines here + re-run this script,
@@ -30,20 +35,22 @@ const base = (svg) => sharp(svg, { density: 384 }).resize(1024, 1024).png().toBu
 const write = async (buf, size, file) =>
   sharp(buf).resize(size, size).png({ compressionLevel: 9 }).toFile(join(outDir, file))
 
-const lightBase = await base(lightSvg)
-// const darkBase = await base(darkSvg)   // dark icon disabled (see note above)
+const visibleBase = await base(Buffer.from(lightSvg)) // big glyph: any / apple-touch / favicon
+const maskableBase = await base(Buffer.from(maskableSvg)) // reduced glyph: safe inside the mask circle
+// const darkBase = await base(Buffer.from(darkSvg))   // dark icon disabled (see note above)
 
 await Promise.all([
-  // Web app manifest icons (any) + maskable — all from the light master.
-  write(lightBase, 64, 'pwa-64x64.png'),
-  write(lightBase, 192, 'pwa-192x192.png'),
-  write(lightBase, 512, 'pwa-512x512.png'),
-  write(lightBase, 512, 'maskable-icon-512x512.png'),
+  // Web app manifest icons (any) — from the big-glyph master.
+  write(visibleBase, 64, 'pwa-64x64.png'),
+  write(visibleBase, 192, 'pwa-192x192.png'),
+  write(visibleBase, 512, 'pwa-512x512.png'),
+  // Maskable (Android adaptive) — reduced glyph so a circle mask can't clip it.
+  write(maskableBase, 512, 'maskable-icon-512x512.png'),
   // iOS home-screen icon (180). Light only — the dark variant is disabled (see note above).
-  write(lightBase, 180, 'apple-touch-icon.png'),
+  write(visibleBase, 180, 'apple-touch-icon.png'),
   // write(darkBase, 180, 'apple-touch-icon-dark.png'),   // dark icon disabled
   // Favicon: a scalable SVG (modern browsers) + a PNG fallback.
-  write(lightBase, 32, 'favicon-32x32.png'),
+  write(visibleBase, 32, 'favicon-32x32.png'),
 ])
 copyFileSync(join(here, 'icon-piday-trace.svg'), join(outDir, 'favicon.svg'))
 

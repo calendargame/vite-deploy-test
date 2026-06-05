@@ -3,7 +3,10 @@
      finger positions 2 -> 3 -> 6, landing on 6 = Saturday. (pi = 3.14159...)
      One smooth flowing curve (swoop shape W5); node 3 stays on the right column. Faint dots = rest of the 7-position
      board (0,1,4,5); solid = on-path nodes (2,3); circled dot = the landed answer (6).
-     Glyph scaled ~1.7x (fills the tile better) and stays within the 40% maskable safe circle. -->
+     Glyph scaled ~2.2x to fill the home-screen bubble (bigger per the owner, 2026-06-05). This
+     larger scale is for the iOS apple-touch / "any" / favicon icons (iOS squircle + full-image uses
+     show most of the tile); build-icons.mjs re-renders the MASKABLE variant at a reduced scale so its
+     glyph stays inside the 40% maskable safe circle (Android adaptive circle masks). -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Calendar Game">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -23,7 +26,7 @@
   </defs>
   <rect width="512" height="512" fill="url(#bg)"/>
   <rect width="512" height="512" fill="url(#glow)"/>
-  <g transform="translate(256 256) scale(1.7) translate(-256 -256)">
+  <g transform="translate(256 256) scale(2.2) translate(-256 -256)">
     <!-- board dots not on this trace: 0 (center), 1, 4, 5 -->
     <g fill="#ffffff" fill-opacity=".26">
       <circle cx="256" cy="256" r="10"/>
