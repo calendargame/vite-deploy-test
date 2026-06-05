@@ -19,6 +19,7 @@ import CustomSelect from './components/CustomSelect.jsx'
 import GuidePage from './components/GuidePage.jsx'
 import LookupCard from './components/LookupCard.jsx'
 import { MethodExplanation, MethodBreakdownSection } from './components/MethodBreakdown.jsx'
+import W5Logo from './components/W5Logo.jsx'
 import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
 import { useProgress } from './store/progress.js'
@@ -1960,7 +1961,10 @@ interface DedOpts {
           <div className="mx-auto px-4 w-full max-w-[480px] relative">
             <div className="flex items-center justify-between gap-2">
               {/* header left: title */}
-              <h1 className="text-xl font-semibold leading-none shrink-0">Calendar Game</h1>
+              <div className="flex items-center gap-2 shrink-0">
+                <W5Logo className="shrink-0" />
+                <h1 className="text-xl font-semibold leading-none shrink-0">Calendar Game</h1>
+              </div>
               <div className="flex items-center gap-2 shrink-0">
                 {/* gear settings button */}
                 <div className="relative" ref={settingsRef}>
