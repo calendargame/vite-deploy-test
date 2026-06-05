@@ -295,8 +295,9 @@ interface DedOpts {
     // show/hide toggles, the two-tap "Enable and Reset Stats?" arm (+ its click-outside / Save-Stats-off
     // / mode-leave disarms), and the 6-box stats array + armedSpan for <StatPanel>. Re-enabling timing
     // follows App's original rule: OFF→just hide; ON with no desync→regen the live date; ON with a
-    // desync (stats moved while hidden)→two-tap confirm→full reset. `timingOff` stays owned by the
-    // component (it's also fed to useGameEngine), so it's passed in with its setter. Flash is the only
+    // desync (stats moved while hidden)→two-tap confirm→full reset. Both toggles (`timingOff` +
+    // `scoringOff`) are owned by the component and persisted in the mode-prefs store, so they're
+    // passed in with their setters (timingOff also feeds useGameEngine). Flash is the only
     // mode with a live timer to tear down, so it passes afterTimingEnabled() (on re-enable) and onHide()
     // (on mode-leave); Classic/Deduction omit them.
     function useStatsHideToggles({eng, saveStats, visible, timingOff, setTimingOff, scoringOff, setScoringOff, afterTimingEnabled, onHide}: { eng: GameEngine; saveStats: boolean; visible: boolean; timingOff: boolean; setTimingOff: (v: boolean) => void; scoringOff: boolean; setScoringOff: (v: boolean) => void; afterTimingEnabled?: () => void; onHide?: () => void }){
@@ -362,7 +363,7 @@ interface DedOpts {
 
 
 
-    const DEPLOY_TS=new Date('2026-06-05T04:53:38Z');
+    const DEPLOY_TS=new Date('2026-06-05T05:54:38Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
@@ -1978,7 +1979,7 @@ interface DedOpts {
               <div className="flex items-center gap-2 shrink-0">
                 {/* gear settings button */}
                 <div className="relative" ref={settingsRef}>
-                  <button type="button" onClick={()=>setSettingsOpen(v=>!v)} className={`px-2.5 py-2 rounded-xl text-sm border ${settingsOpen?"btn-solid border-transparent":"surface-button text-purple-100/80"}`} aria-label="Settings">⚙</button>
+                  <button type="button" onClick={()=>setSettingsOpen(v=>!v)} className={`px-2.5 py-2 rounded-xl text-sm border ${settingsOpen?"btn-solid border-transparent":"panel text-purple-100/80"}`} aria-label="Settings">⚙</button>
                 </div>
                 {/* mode selector */}
                 {/* Mode CustomSelect. Replaced the original native <select> as part of the

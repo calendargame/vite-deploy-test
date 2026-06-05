@@ -61,6 +61,12 @@ export default function GuidePage() {
           Gregorian reform took effect).
         </p>
         <p className="mt-2">
+          It runs entirely in your browser and saves your progress on this device. You can add it to
+          your home screen and use it like an app — on iPhone via Safari's Share button → Add to Home
+          Screen, on Android via Chrome's Install app / Add to Home screen — and once it has loaded it
+          works fully offline, with no connection needed to practice.
+        </p>
+        <p className="mt-2">
           It pairs with the book{' '}
           <i>Day-of-the-Week Calculation: A Highly Optimized Mental Method</i>.
         </p>
@@ -359,11 +365,6 @@ export default function GuidePage() {
           <b>Not saved</b> — these reset each visit: any in-progress timed round or run and the
           current question (a half-finished run is discarded by design); and the current tab — the
           app always opens to Classic. <b>Full Reset</b> (below) clears everything that is saved.
-        </p>
-        <p>
-          <b>Install &amp; offline</b> — Calendar Game can be added to your home screen (use your
-          browser's Add to Home Screen / Install option) and then opens full-screen like a normal
-          app. Once it has loaded it works fully offline — no connection needed to practice.
         </p>
       </GuideSection>
       <GuideSection

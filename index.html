@@ -13,13 +13,16 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <!-- Icons (generated from the W5 master by design/icons/build-icons.mjs). The dark
-       apple-touch-icon is served under iOS dark mode via the media query. The web app
+  <!-- Icons (generated from the W5 master by design/icons/build-icons.mjs). The web app
        manifest link + service-worker registration are injected by vite-plugin-pwa. -->
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon-32x32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="apple-touch-icon" href="/apple-touch-icon-dark.png" media="(prefers-color-scheme: dark)">
+  <!-- Dark-mode home-screen icon is DISABLED. iOS does not reliably honor a dark-variant
+       apple-touch-icon (often needs a remove + re-add, or ignores it), so we ship the single
+       light icon. The dark master (design/icons/icon-piday-trace-dark.svg) is kept; to re-enable,
+       uncomment the link below AND the dark lines in design/icons/build-icons.mjs, then re-run it.
+  <link rel="apple-touch-icon" href="/apple-touch-icon-dark.png" media="(prefers-color-scheme: dark)"> -->
   <script>(function(){var d=window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.setAttribute('data-theme',d?'dusk':'light');document.addEventListener('gesturestart',function(e){e.preventDefault();});})();</script>
 </head>
 <body class="text-purple-50">

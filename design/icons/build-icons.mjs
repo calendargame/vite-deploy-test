@@ -19,7 +19,11 @@ const outDir = join(root, 'public')
 mkdirSync(outDir, { recursive: true })
 
 const lightSvg = readFileSync(join(here, 'icon-piday-trace.svg'))
-const darkSvg = readFileSync(join(here, 'icon-piday-trace-dark.svg'))
+// Dark home-screen icon is DISABLED — iOS doesn't reliably honor a dark-variant apple-touch-icon
+// (it often needs a remove + re-add, or ignores it entirely), so we ship the single light icon.
+// The dark master SVG is kept. To re-enable: uncomment the 3 dark lines here + re-run this script,
+// and uncomment the dark <link> in index.html.
+// const darkSvg = readFileSync(join(here, 'icon-piday-trace-dark.svg'))
 
 // Render the SVG to a crisp 1024px base raster once, then downscale to each target.
 const base = (svg) => sharp(svg, { density: 384 }).resize(1024, 1024).png().toBuffer()
@@ -27,7 +31,7 @@ const write = async (buf, size, file) =>
   sharp(buf).resize(size, size).png({ compressionLevel: 9 }).toFile(join(outDir, file))
 
 const lightBase = await base(lightSvg)
-const darkBase = await base(darkSvg)
+// const darkBase = await base(darkSvg)   // dark icon disabled (see note above)
 
 await Promise.all([
   // Web app manifest icons (any) + maskable — all from the light master.
@@ -35,9 +39,9 @@ await Promise.all([
   write(lightBase, 192, 'pwa-192x192.png'),
   write(lightBase, 512, 'pwa-512x512.png'),
   write(lightBase, 512, 'maskable-icon-512x512.png'),
-  // iOS home-screen icon (180), light + dark (the dark one is served via a prefers-color-scheme link).
+  // iOS home-screen icon (180). Light only — the dark variant is disabled (see note above).
   write(lightBase, 180, 'apple-touch-icon.png'),
-  write(darkBase, 180, 'apple-touch-icon-dark.png'),
+  // write(darkBase, 180, 'apple-touch-icon-dark.png'),   // dark icon disabled
   // Favicon: a scalable SVG (modern browsers) + a PNG fallback.
   write(lightBase, 32, 'favicon-32x32.png'),
 ])
@@ -50,7 +54,6 @@ for (const f of [
   'pwa-512x512.png',
   'maskable-icon-512x512.png',
   'apple-touch-icon.png',
-  'apple-touch-icon-dark.png',
   'favicon-32x32.png',
   'favicon.svg',
 ])

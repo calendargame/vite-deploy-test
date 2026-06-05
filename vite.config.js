@@ -29,7 +29,7 @@ export default defineConfig(({ command }) => ({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      includeAssets: ['apple-touch-icon.png', 'apple-touch-icon-dark.png', 'favicon.svg', 'favicon-32x32.png'],
+      includeAssets: ['apple-touch-icon.png', 'favicon.svg', 'favicon-32x32.png'],
       manifest: {
         name: 'Calendar Game',
         short_name: 'Calendar Game',

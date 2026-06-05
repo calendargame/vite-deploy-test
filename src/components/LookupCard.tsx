@@ -124,10 +124,10 @@ export default function LookupCard({
   // Pattern + example based on which numeric format applies.
   const inputMeta = (() => {
     if (numericFmtForInput === 'numeric-mdy')
-      return { label: 'm/d/y', example: '7/4/1776', sep: '/', orderType: 'mdy' }
+      return { label: 'm/d/y', example: '3/14/1592', sep: '/', orderType: 'mdy' }
     if (numericFmtForInput === 'numeric-dmy')
-      return { label: 'd.m.y', example: '4.7.1776', sep: '.', orderType: 'dmy' }
-    return { label: 'y-m-d', example: '1776-7-4', sep: '-', orderType: 'ymd' }
+      return { label: 'd.m.y', example: '14.3.1592', sep: '.', orderType: 'dmy' }
+    return { label: 'y-m-d', example: '1592-3-14', sep: '-', orderType: 'ymd' }
   })()
   // Clear the input when the format changes (silently keeping it would be confusing since it might no longer parse).
   // Use a ref to skip the initial mount so navigating to Lookup doesn't wipe the user's existing input.
