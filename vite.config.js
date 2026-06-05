@@ -5,6 +5,7 @@
 import { defineConfig } from 'vitest/config'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
+import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/vite-deploy-test/' : '/',
@@ -14,7 +15,40 @@ export default defineConfig(({ command }) => ({
   // (compiles components/hooks), target React 19 (imports react/compiler-runtime), and client-only
   // (the preset's applyToEnvironmentHook). All 40 react-hooks violations were fixed first so every
   // component is compiler-safe to optimize.
-  plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+  plugins: [
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
+    // PWA (Stage D3): installable + fully offline. vite-plugin-pwa generates the web app
+    // manifest + a Workbox service worker that precaches the whole build (so the app runs
+    // with no network). registerType 'autoUpdate' + injectRegister 'auto' silently swap in a
+    // new service worker on the next visit after a deploy — no update prompt for a solo tool.
+    // start_url/scope are derived from Vite `base`, so this is correct for both the test base
+    // (/vite-deploy-test/) and the eventual root cutover (/). Icons live in public/ (generated
+    // from the W5 master by design/icons/build-icons.mjs); apple-touch + favicon are precached
+    // via includeAssets and linked (incl. the dark variant) in index.html.
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      includeAssets: ['apple-touch-icon.png', 'apple-touch-icon-dark.png', 'favicon.svg', 'favicon-32x32.png'],
+      manifest: {
+        name: 'Calendar Game',
+        short_name: 'Calendar Game',
+        description: 'A mobile-first trainer for fast mental day-of-the-week calculation.',
+        theme_color: '#0d1117',
+        background_color: '#0d1117',
+        display: 'standalone',
+        icons: [
+          { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      // The SW never runs in dev (keeps HMR clean) — offline is verified against a production
+      // build via `vite preview`.
+      devOptions: { enabled: false },
+    }),
+  ],
   test: {
     // Pure-logic tests run in Node (Vitest's default environment). DOM characterization
     // tests (Stage C, Step 6) opt into jsdom per-file via `// @vitest-environment jsdom`.

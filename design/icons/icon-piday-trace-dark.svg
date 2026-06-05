@@ -1,0 +1,45 @@
+<!-- Calendar Game — CHOSEN app icon, DARK variant (2026-06-04; deeper-midnight bg).
+     Identical glyph to icon-piday-trace.svg (the Pi-Day 3/14/1592 trace 2->3->6 = Saturday);
+     only the background gradient is shifted to a deeper midnight purple so the home-screen
+     icon reads well under iOS dark mode (apple-touch-icon media=(prefers-color-scheme: dark)).
+     The white trace/glow/dots are unchanged and read on both backgrounds. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Calendar Game">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6d28d9"/>
+      <stop offset=".45" stop-color="#4c1d95"/>
+      <stop offset=".78" stop-color="#2e1065"/>
+      <stop offset="1" stop-color="#0f0428"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".3" cy=".22" r=".85">
+      <stop offset="0" stop-color="#c4b5fd" stop-opacity=".42"/>
+      <stop offset=".55" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="trace" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#c4b5fd"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <g transform="translate(256 256) scale(1.7) translate(-256 -256)">
+    <!-- board dots not on this trace: 0 (center), 1, 4, 5 -->
+    <g fill="#ffffff" fill-opacity=".26">
+      <circle cx="256" cy="256" r="10"/>
+      <circle cx="310" cy="316" r="10"/>
+      <circle cx="202" cy="316" r="10"/>
+      <circle cx="202" cy="256" r="10"/>
+    </g>
+    <!-- the trace: 2 -> 3 -> 6, one smooth flowing curve (shape W5) -->
+    <path d="M310,256 C313,226 313,206 310,196 C300,184 240,184 202,196"
+          fill="none" stroke="url(#trace)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- on-path nodes 2, 3 — both on the right column (x=310), aligned -->
+    <g fill="#ffffff">
+      <circle cx="310" cy="256" r="10"/>
+      <circle cx="310" cy="196" r="10"/>
+    </g>
+    <!-- landed answer (6 = Saturday), circled -->
+    <circle cx="202" cy="196" r="9" fill="#ffffff"/>
+    <circle cx="202" cy="196" r="19" fill="none" stroke="#ffffff" stroke-width="5"/>
+  </g>
+</svg>

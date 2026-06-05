@@ -7,6 +7,19 @@
   <title>Calendar Game</title>
   <meta name="application-name" content="Calendar Game">
   <meta name="apple-mobile-web-app-title" content="Calendar Game">
+  <!-- PWA standalone (Stage D3): launches full-screen from the home screen. No safe-area
+       handling in the app, so the status bar is a solid (non-translucent) bar — content
+       starts below it. Verify the standalone look on iPhone at the acceptance deploy. -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <!-- Icons (generated from the W5 master by design/icons/build-icons.mjs). The dark
+       apple-touch-icon is served under iOS dark mode via the media query. The web app
+       manifest link + service-worker registration are injected by vite-plugin-pwa. -->
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32x32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon-dark.png" media="(prefers-color-scheme: dark)">
   <script>(function(){var d=window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.setAttribute('data-theme',d?'dusk':'light');document.addEventListener('gesturestart',function(e){e.preventDefault();});})();</script>
 </head>
 <body class="text-purple-50">
