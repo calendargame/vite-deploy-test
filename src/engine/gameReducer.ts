@@ -234,12 +234,14 @@ const stripEntryMeta = ({ btns, overrideUsed, capsule, hasCredit, isLive, liveSt
 
 const blankStats = (): Stats => ({ played: 0, good: 0, streak: 0, best: 0, times: [] })
 
-// The launch / fresh-question engine state for a given starting date.
-export const initEngine = (date: Question): GameState => ({
+// The launch / fresh-question engine state for a given starting date. `initialStats` lets a
+// continuous mode (Classic/Flash/Deduction) HYDRATE its lifetime stats from saved progress on
+// mount (Stage D1); omitted ⇒ a blank slate (timed modes, and the remount after a Full Reset).
+export const initEngine = (date: Question, initialStats?: Stats): GameState => ({
   date,
   questionId: 0,
   persistBtns: {},
-  stats: blankStats(),
+  stats: initialStats ?? blankStats(),
   stack: [],
   forwardStack: [],
   backDepth: 0,

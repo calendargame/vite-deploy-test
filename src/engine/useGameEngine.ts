@@ -18,7 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useReducer, useRef, useEffect, useMemo } from 'react'
 import { gameReducer, initEngine, correctIndexOf } from './gameReducer.js'
-import type { Question } from './gameReducer.js'
+import type { Question, Stats } from './gameReducer.js'
 
 // genDate produces the next question for the active year range (the parent bakes in the
 // format / leap / calendar settings — it's App's genDate, or makeDedPuzzle for Deduction).
@@ -29,10 +29,14 @@ export interface UseGameEngineOptions {
   useJulian: boolean
   saveStats: boolean
   timingOff: boolean
+  // Hydrate lifetime stats from saved progress on mount (Stage D1). A GETTER — read ONCE inside the
+  // lazy reducer init (where genDate is already read), so the store access stays out of render and
+  // the engine never re-hydrates mid-session. Omitted ⇒ blank stats (timed modes; post-Full-Reset remount).
+  getInitialStats?: () => Stats
 }
 
-export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff }: UseGameEngineOptions) {
-  const [state, dispatch] = useReducer(gameReducer, undefined, () => initEngine(genDate(minY, maxY)))
+export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff, getInitialStats }: UseGameEngineOptions) {
+  const [state, dispatch] = useReducer(gameReducer, undefined, () => initEngine(genDate(minY, maxY), getInitialStats?.()))
 
   // The solve-timer starts when a NEW question is shown (advance / New / Reset bump
   // questionId). Back/Forward change `date` to a browsed entry but leave questionId

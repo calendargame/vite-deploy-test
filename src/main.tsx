@@ -21,6 +21,8 @@ import LookupCard from './components/LookupCard.jsx'
 import { MethodExplanation, MethodBreakdownSection } from './components/MethodBreakdown.jsx'
 import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
+import { useProgress } from './store/progress.js'
+import type { AoxBest } from './store/progress.js'
 import { calcAvg, calcLast, calcMed } from './engine/stats.js'
 import { useGameEngine } from './engine/useGameEngine.js'
 import type { Question, WeekdayQuestion, DedPuzzle, GameState } from './engine/gameReducer.js'
@@ -58,9 +60,7 @@ interface DedOpts {
   julCrossOnly: boolean
   monthOnly1582: boolean
 }
-interface AoxBest { avg: number | null; avgMed: number | null; avgRoundId: number | null; med: number | null; medAvg: number | null; medRoundId: number | null }
-interface BlitzBest { score: number; streak: number; scoreRoundId: number | null; streakRoundId: number | null }
-interface SuddenBest { score: number; roundId: number | null }
+// AoxBest / BlitzBest / SuddenBest moved to store/progress.ts (the persisted store owns them); imported above.
 
     const {useEffect,useRef,useState,useCallback} = React;
     // ─────────────────────────────────────────────────────────────────────────
@@ -615,7 +615,9 @@ interface SuddenBest { score: number; roundId: number | null }
       // Per-config Best Average / Median (component-owned, like Blitz's Best Score). A run records
       // its Best on completion; an Override that undoes the completing solve rolls it back, gated
       // to the run that set it via the run id.
-      const [bests,setBests]=useState<Record<string, AoxBest>>({});
+      // AoX all-time bests (avg/median, config-keyed) persist across reloads (Stage D1): from the
+      // progress store. (bestNew markers + the rollback refs below stay local — per-session/ephemeral.)
+      const bests=useProgress(s=>s.aoxBest),setBests=useProgress(s=>s.setAoxBest);
       const [bestNew,setBestNew]=useState<Record<string, { avg: boolean; med: boolean }>>({});
       const nextRunIdRef=useRef(1);
       const currentRunIdRef=useRef<number | null>(null);
@@ -806,8 +808,12 @@ interface SuddenBest { score: number; roundId: number | null }
     // ============================================================
     function ClassicMode({visible,genDate,minY,maxY,useJulian,saveStats,dateFormat,randomFormat,leapChance,janFebChance,julianChance,fmtDate,onFreshChange}: ModeProps & { genDate: GenDate; fmtDate: FmtDate }){
       const [timingOff,setTimingOff]=useState(true);   // Classic launches with timing hidden (feeds the engine)
-      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff});
+      // Lifetime stats persist across reloads (Stage D1): hydrate from saved progress on mount,
+      // then mirror every stats change back to the store (which caps the solve-times window).
+      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff,getInitialStats:()=>useProgress.getState().stats.classic});
       const {state,correct,overrideAvail}=eng;
+      const setModeStats=useProgress(s=>s.setModeStats);
+      useEffect(()=>{setModeStats('classic',state.stats);},[state.stats,setModeStats]);
       const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
       // Hideable stats chrome (show/hide toggles + two-tap "Enable and Reset Stats?" arm + the 6-box
       // stats strip), shared with Flash/Deduction via useStatsHideToggles.
@@ -884,8 +890,11 @@ interface SuddenBest { score: number; roundId: number | null }
       const flashDeadlineRef=useRef<number | null>(null);
       const flashBarRef=useRef<HTMLSpanElement | null>(null);
       const [timingOff,setTimingOff]=useState(false);   // Flash shows timing by default (feeds the engine)
-      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff});
+      // Lifetime stats persist across reloads (Stage D1): hydrate on mount, mirror changes to the store.
+      const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff,getInitialStats:()=>useProgress.getState().stats.flash});
       const {state,correct,overrideAvail}=eng;
+      const setModeStats=useProgress(s=>s.setModeStats);
+      useEffect(()=>{setModeStats('flash',state.stats);},[state.stats,setModeStats]);
       const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
       const resetFlashBar=()=>{if(flashBarRef.current){flashBarRef.current.style.transition="none";flashBarRef.current.style.width="100%";}};
@@ -1024,7 +1033,10 @@ interface SuddenBest { score: number; roundId: number | null }
       const blitzBarRef=useRef<HTMLSpanElement | null>(null),blitzTimeRef=useRef<HTMLSpanElement | null>(null);
       const qDeadlineRef=useRef<number | null>(null),qPausedAtRef=useRef<number | null>(null),qPausedAccRef=useRef(0);
       const suddenBarRef=useRef<HTMLSpanElement | null>(null),suddenTimeRef=useRef<HTMLSpanElement | null>(null);
-      const [blitzBest,setBlitzBest]=useState<Record<string, BlitzBest>>({}),[suddenBest,setSuddenBest]=useState<Record<string, SuddenBest>>({});
+      // Blitz/Sudden all-time bests persist across reloads (Stage D1): from the progress store.
+      // (The "new best ★" markers below stay local — they're per-session UI, not persisted.)
+      const blitzBest=useProgress(s=>s.blitzBest),setBlitzBest=useProgress(s=>s.setBlitzBest);
+      const suddenBest=useProgress(s=>s.suddenBest),setSuddenBest=useProgress(s=>s.setSuddenBest);
       const [blitzBestNew,setBlitzBestNew]=useState<Record<string, { score: boolean; streak: boolean }>>({}),[suddenBestNew,setSuddenBestNew]=useState<Record<string, boolean>>({});
       const currentRoundIdRef=useRef<number | null>(null),nextRoundIdRef=useRef(1);
       const eng=useGameEngine({genDate,minY,maxY,useJulian,saveStats,timingOff:false}); // Blitz: timing always tracked
@@ -1142,7 +1154,7 @@ interface SuddenBest { score: number; roundId: number | null }
             return{...prev,[suddenBk]:next};
           });
         }
-      },[timerDone,S.good,S.best,perQ,blitzBk,suddenBk]);
+      },[timerDone,S.good,S.best,perQ,blitzBk,suddenBk,setBlitzBest,setSuddenBest]);
 
       const togglePerQ=()=>{if(active||timerDone)return;setPerQ(v=>{const n=!v;if(n&&allowMistakes)setAllowMistakes(false);return n;});};
       const toggleAllowMistakes=()=>{if(active||timerDone)return;setAllowMistakes(v=>!v);};
@@ -1239,11 +1251,17 @@ interface SuddenBest { score: number; roundId: number | null }
       const genMonth=(lo: number,hi: number): DedPuzzle=>makeDedPuzzle("month",lo,hi,opts)!;
       const genYear=(lo: number,hi: number): DedPuzzle=>makeDedPuzzle("year",lo,hi,opts)||yearFallback(lo);
 
-      const dayEng=useGameEngine({genDate:genDay,minY,maxY,useJulian,saveStats,timingOff});
-      const monthEng=useGameEngine({genDate:genMonth,minY,maxY,useJulian,saveStats,timingOff});
-      const yearEng=useGameEngine({genDate:genYear,minY,maxY,useJulian,saveStats,timingOff});
+      // Lifetime stats persist per sub-mode (Stage D1): each silo hydrates from its own saved slice
+      // on mount and mirrors changes back to the store.
+      const dayEng=useGameEngine({genDate:genDay,minY,maxY,useJulian,saveStats,timingOff,getInitialStats:()=>useProgress.getState().stats.dedDay});
+      const monthEng=useGameEngine({genDate:genMonth,minY,maxY,useJulian,saveStats,timingOff,getInitialStats:()=>useProgress.getState().stats.dedMonth});
+      const yearEng=useGameEngine({genDate:genYear,minY,maxY,useJulian,saveStats,timingOff,getInitialStats:()=>useProgress.getState().stats.dedYear});
       const eng=dedType==="month"?monthEng:dedType==="year"?yearEng:dayEng;
       const {state,correct,overrideAvail}=eng;
+      const setModeStats=useProgress(s=>s.setModeStats);
+      useEffect(()=>{setModeStats('dedDay',dayEng.state.stats);},[dayEng.state.stats,setModeStats]);
+      useEffect(()=>{setModeStats('dedMonth',monthEng.state.stats);},[monthEng.state.stats,setModeStats]);
+      useEffect(()=>{setModeStats('dedYear',yearEng.state.stats);},[yearEng.state.stats,setModeStats]);
       // One flash for the active grid (only one sub-mode visible at a time). setFlash is cleared
       // directly on sub-type switch (changeDedType), so it's destructured alongside the pulse setter.
       const {flash,setFlash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
@@ -1407,7 +1425,12 @@ interface SuddenBest { score: number; roundId: number | null }
       const [minInputVal,setMinInputVal]=useState("1");
       const [maxInputVal,setMaxInputVal]=useState("10000");
       const minInputRef=useRef<HTMLInputElement | null>(null),maxInputRef=useRef<HTMLInputElement | null>(null);
-      const [lookupHistory,setLookupHistory]=useState<LookupEntry[]>([]);
+      // Lookup history persists across reloads (Stage D1): sourced from the progress store
+      // instead of local useState. The store setter accepts a direct value OR a functional
+      // updater, so the push/move/clear handlers below stay unchanged.
+      const lookupHistory=useProgress(s=>s.lookupHistory);
+      const setLookupHistory=useProgress(s=>s.setLookupHistory);
+      const resetProgress=useProgress(s=>s.resetProgress);   // Full Reset wipes saved progress too (Stage D1)
       const [lookupInput,setLookupInput]=useState("");
       const [lookupOutput,setLookupOutput]=useState("");
       const [lookupCalcDate,setLookupCalcDate]=useState<CodeDate | null>(null);
@@ -1717,8 +1740,12 @@ interface SuddenBest { score: number; roundId: number | null }
         setAppScrolledFromTop(false);
         // Settings popover → defaults (13 store values incl. theme + the 2 transient input mirrors).
         resetSettings();
-        // Lookup (lives here in App, not in a mode component).
-        setLookupHistory([]);setLookupInput("");setLookupOutput("");
+        // Saved gameplay progress → wiped (Stage D1): clears lifetime stats + all-time bests + Lookup
+        // history in the persisted store, making Full Reset permanent. Runs BEFORE the remount-key bumps
+        // below, so the continuous modes re-hydrate from the now-empty store (blank stats).
+        resetProgress();
+        // Lookup input/output are transient local state (the history itself was cleared by resetProgress).
+        setLookupInput("");setLookupOutput("");
         setLookupCalcDate(null);setLookupSelectedHistoryId(null);setLookupCalcOpen(false);
         // Remount all five mode components → their internal state resets to launch defaults.
         setAoxResetKey(k=>k+1);

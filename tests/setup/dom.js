@@ -21,6 +21,8 @@
 // isn't needed — only that these calls don't throw. All stubs are window-guarded so this
 // file is a no-op (beyond the matchers) under the Node-environment pure-logic tests.
 import '@testing-library/jest-dom/vitest'
+import { beforeEach } from 'vitest'
+import { useProgress } from '../../src/store/progress.js'
 
 if (typeof window !== 'undefined') {
   if (!window.matchMedia) {
@@ -53,3 +55,10 @@ if (typeof window !== 'undefined') {
   // unconditionally with a true no-op to keep the harness output clean.
   window.scrollTo = () => {}
 }
+
+// Saved progress (Stage D1) is a module singleton the app reads, so — like the settings store —
+// it can leak stats / bests / Lookup history between tests. Reset it before EVERY test (the
+// DOM tests also localStorage.clear() + resetSettings() in their own beforeEach). Cheap + idempotent.
+beforeEach(() => {
+  useProgress.getState().resetProgress()
+})

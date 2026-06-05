@@ -153,7 +153,10 @@ export default function GuidePage() {
           median, which is less skewed by outliers. Any time of 60 seconds or more — whether an
           individual solve, a computed average or median, or any Best — displays as "—". Times are
           still tracked internally and contribute to averages, medians, and best-tracking; only the
-          display is capped.
+          display is capped. Your saved solve times keep a rolling window of the most recent 500
+          (older times roll off so saved progress stays small on your device), so after a lot of
+          practice Avg and Med reflect your recent 500 rather than all-time; within a single visit,
+          every solve still counts.
         </p>
         <p>
           Time formatting follows the WCA speedcubing convention: individual single times (Last) are{' '}
@@ -334,6 +337,25 @@ export default function GuidePage() {
           automatically, with separate theme choices for each. Disable to pick one manually.
         </p>
       </GuideSection>
+      <GuideSection id="saved-progress" title="Saved Progress" openId={open} onToggle={toggle}>
+        <p>
+          The app saves the following on this device and restores them when you return — after
+          closing the app, refreshing, or revisiting later: your <b>⚙ Settings</b> (date format,
+          calendar system, year range, the leap / Jan-Feb / Julian chances, Save Stats, and theme);
+          your <b>stats</b> in the casual modes (Classic, Flash, Deduction); your{' '}
+          <b>all-time bests</b> (Blitz score &amp; streak, Sudden score, AoX average &amp; median);
+          and your <b>Lookup history</b>. Saved Average and Median use a rolling window of your most
+          recent 500 solves.
+        </p>
+        <p>
+          <b>Not saved</b> — these reset each visit: any in-progress timed round or run and the
+          current question (a half-finished run is discarded by design); mode options outside the ⚙
+          menu — AoX count, Blitz / Sudden timer lengths, Allow Mistakes, Per-Round vs Per-Question,
+          Deduction sub-type, the show / hide stat toggles, and One-By-One — which return to their
+          defaults; and the current tab (the app always opens to Classic). <b>Full Reset</b> (below)
+          clears everything that is saved.
+        </p>
+      </GuideSection>
       <GuideSection
         id="reset-settings"
         title="Reset Settings &amp; Full Reset"
@@ -353,7 +375,9 @@ export default function GuidePage() {
         <p>
           <b>Full Reset</b> — at the bottom-right of the ⚙ menu, restores the entire site to its
           initial launch state. Wipes all stats, all-time bests (Blitz, Sudden, AoX), Lookup
-          history, and in-progress rounds and runs. Resets every setting and toggle across all modes
+          history, and in-progress rounds and runs. Your stats, all-time bests, and Lookup history
+          are saved on this device and restored on your next visit, so Full Reset clears that saved
+          copy permanently. Resets every setting and toggle across all modes
           — both the ⚙ menu and the per-mode toggles (AoX N, timer durations, Deduction sub-types
           and toggles, Allow Mistakes, Save Stats, Stop Codes, etc.). Closes any open overlay (How
           to Play, ⚙ menu, codes, method breakdown) and switches to Classic. Requires two taps to
