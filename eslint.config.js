@@ -33,26 +33,16 @@ export default defineConfig([
       // (e.g. `const {btns, isLive, ...date}=e` in gameReducer's stripEntryMeta); the `^_`
       // pattern still marks any other deliberate discard.
       'no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true }],
-      // ── React-Compiler-strict hook rules: DEFERRED to the React Compiler step (Stage D). ──
-      // React 19's react-hooks plugin enforces Compiler-grade purity/immutability. The
-      // mode-untangle is done (the fused App engine that tripped the bulk of these is gone),
-      // but ~40 findings remain in the LIVE mode components + reducer — e.g. reading a timer
-      // ref during render to show the live countdown, performance.now() in a handler, setState
-      // inside a rAF effect. That code is CORRECT and fully tested; the patterns just aren't
-      // React-Compiler-optimizable yet. They get fixed AT THE SOURCE when we turn on the React
-      // Compiler (Stage D) — with the compiler in the loop to verify each refactor actually
-      // helps. Kept WARN until then (always visible, never silently suppressed); flipping them
-      // to error is part of enabling the Compiler.
-      'react-hooks/immutability': 'warn',
-      'react-hooks/purity': 'warn',
-      'react-hooks/refs': 'warn',
-      'react-hooks/set-state-in-effect': 'warn',
-      'react-hooks/static-components': 'warn',
-      'react-hooks/component-hook-factories': 'warn',
-      'react-hooks/preserve-manual-memoization': 'warn',
-      'react-hooks/incompatible-library': 'warn',
-      'react-hooks/unsupported-syntax': 'warn',
-      'react-hooks/exhaustive-deps': 'warn',
+      // React-Compiler hook rules now run at their RECOMMENDED severities (the Stage-D deferral is
+      // over: the React Compiler is enabled in vite.config and every violation was fixed at the
+      // source). The compiler-correctness rules — refs, purity, immutability, set-state-in-effect,
+      // static-components, preserve-manual-memoization, etc. — are ERRORS via
+      // reactHooks.configs.flat.recommended (extended above), so a regression that makes a
+      // component un-optimizable (and risks a subtle miscompile) now blocks CI. We deliberately do
+      // NOT override exhaustive-deps to error: React keeps it `warn` because it's a heuristic with
+      // known false-positives — more so with the compiler stabilizing functions the linter can't
+      // see — so the handful of genuinely-intentional dep exclusions carry justified inline
+      // disables instead. No per-rule overrides are needed here; the recommended config supplies them.
     },
   },
   // TypeScript (.ts/.tsx): the typescript-eslint parser (so ESLint can read TS syntax at all)
