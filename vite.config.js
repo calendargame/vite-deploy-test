@@ -8,17 +8,20 @@ import babel from '@rolldown/plugin-babel'
 import { VitePWA } from 'vite-plugin-pwa'
 import { visualizer } from 'rollup-plugin-visualizer'
 
+// GitHub Pages serves the org ROOT page `calendargame.github.io` (and its custom domain
+// calendargame.app) from '/', but every PROJECT repo's Pages site from '/<repo>/'. CI sets
+// GITHUB_REPOSITORY="owner/repo", so deriving the base from it lets ONE codebase deploy correctly to
+// BOTH the live repo and the staging repo (currently `test_version`) — and it stays correct even if
+// the staging repo is renamed later, with no code change. Local builds have no GITHUB_REPOSITORY → '/'.
+const pagesBase = (repository) => {
+  const repo = (repository || '').split('/')[1] || ''
+  return repo && repo !== 'calendargame.github.io' ? `/${repo}/` : '/'
+}
+
 export default defineConfig(({ command, mode }) => ({
-  // The live org page (calendargame.github.io — also served at calendargame.app) lives at the ROOT,
-  // so its CI build uses base '/'. The test/staging repo (vite-deploy-test) + any local build keep
-  // '/vite-deploy-test/'. GitHub Actions sets GITHUB_REPOSITORY to "owner/repo", so one codebase
-  // deploys correctly to both: the live build detects the calendargame.github.io repo.
-  base:
-    command === 'build'
-      ? (process.env.GITHUB_REPOSITORY || '').endsWith('/calendargame.github.io')
-        ? '/'
-        : '/vite-deploy-test/'
-      : '/',
+  // Dev/preview serve from '/'. A production `vite build` derives its base from the repo it builds
+  // in (see pagesBase above): '/' for the live org page, '/<repo>/' for the staging project repo.
+  base: command === 'build' ? pagesBase(process.env.GITHUB_REPOSITORY) : '/',
   // React Compiler — automatic memoization (Stage D2). @vitejs/plugin-react v6 is Rolldown/oxc-based
   // and dropped its old `babel` option, so the compiler runs through @rolldown/plugin-babel fed the
   // plugin's `reactCompilerPreset()`. Defaults are exactly what we want: compilationMode 'infer'
@@ -32,8 +35,8 @@ export default defineConfig(({ command, mode }) => ({
     // manifest + a Workbox service worker that precaches the whole build (so the app runs
     // with no network). registerType 'autoUpdate' + injectRegister 'auto' silently swap in a
     // new service worker on the next visit after a deploy — no update prompt for a solo tool.
-    // start_url/scope are derived from Vite `base`, so this is correct for both the test base
-    // (/vite-deploy-test/) and the eventual root cutover (/). Icons live in public/ (generated
+    // start_url/scope are derived from Vite `base`, so this is correct for both the live root (/)
+    // and the staging project base (/<repo>/). Icons live in public/ (generated
     // from the W5 master by design/icons/build-icons.mjs); apple-touch + favicon are precached
     // via includeAssets and linked (incl. the dark variant) in index.html.
     VitePWA({

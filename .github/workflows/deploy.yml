@@ -44,7 +44,7 @@ jobs:
         run: npm run build
       # Custom domain: the LIVE org repo serves at calendargame.app. A CNAME file in the deployed
       # artifact makes GitHub Pages set + persist that custom domain across every Actions deploy
-      # (so it can't silently reset). Only the live repo gets it — the staging repo (vite-deploy-test)
+      # (so it can't silently reset). Only the live repo gets it — the staging repo (test_version)
       # keeps its github.io project URL.
       - name: Add CNAME for the custom domain (live repo only)
         if: github.repository == 'calendargame/calendargame.github.io'
