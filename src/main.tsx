@@ -364,7 +364,7 @@ interface DedOpts {
 
 
 
-    const DEPLOY_TS=new Date('2026-06-05T05:54:38Z');
+    const DEPLOY_TS=new Date('2026-06-05T16:49:56Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
