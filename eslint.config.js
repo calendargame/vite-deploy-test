@@ -71,6 +71,13 @@ export default defineConfig([
     files: ['src/main.tsx'],
     rules: { 'react-refresh/only-export-components': 'off' },
   },
+  // Build config files (vite.config.js, postcss.config.js, eslint.config.js) run in Node, not the
+  // browser — give them Node globals so `no-undef` doesn't flag e.g. `process.env` (the live build
+  // reads process.env.GITHUB_REPOSITORY to pick the base path).
+  {
+    files: ['*.config.js'],
+    languageOptions: { globals: globals.node },
+  },
   // MUST be last: turns off any ESLint rules that would conflict with Prettier's
   // formatting, so the two tools never fight (ESLint = correctness, Prettier = style).
   prettier,
