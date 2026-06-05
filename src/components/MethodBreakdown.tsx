@@ -37,11 +37,15 @@ export function MethodExplanation({
   displayedFormat?: FormatId
   cellDates?: CodeDate[] | null
 }) {
-  const summaries: MethodSummary[] = React.useMemo(() => {
-    if (cellDates && cellDates.length > 0)
-      return cellDates.map((cd) => computeMethodSummary(cd, true)).filter((s): s is MethodSummary => s != null)
-    return date ? [computeMethodSummary(date, useJulian)].filter((s): s is MethodSummary => s != null) : []
-  }, [cellDates, date?.y, date?.m, date?.d, useJulian])
+  // Plain computation (no useMemo): computeMethodSummary is pure + cheap and only runs while
+  // the codes panel is open. Letting the React Compiler own the memoization removes a manual dep
+  // array that under-specified `date` (it listed date?.y/m/d, not the object the call reads).
+  const summaries: MethodSummary[] =
+    cellDates && cellDates.length > 0
+      ? cellDates.map((cd) => computeMethodSummary(cd, true)).filter((s): s is MethodSummary => s != null)
+      : date
+        ? [computeMethodSummary(date, useJulian)].filter((s): s is MethodSummary => s != null)
+        : []
   if (summaries.length === 0)
     return (
       <div className="text-sm text-purple-100/80">Show Codes is only supported for AD dates.</div>
@@ -119,16 +123,20 @@ export function MethodBreakdownSection({
   const [frozenDisplayedFormat, setFrozenDisplayedFormat] = React.useState(displayedFormat)
   const [frozenCellDates, setFrozenCellDates] = React.useState(cellDates)
   const [frozenUseJulian, setFrozenUseJulian] = React.useState(useJulian)
-  // Latest-value refs (updated every render) so the close-timeout reads the freshest
-  // values when it fires after CODES_CLOSE_MS.
+  // Latest-value refs so the close-timeout reads the freshest values when it fires after
+  // CODES_CLOSE_MS. Synced in a post-commit effect (no dep array = every commit) rather than
+  // during render — the compiler's refs rule forbids writing refs in render, and the timeout
+  // always fires long after a commit, so post-commit freshness is exactly what it needs.
   const latestDateRef = React.useRef(date)
   const latestDisplayedFormatRef = React.useRef(displayedFormat)
   const latestCellDatesRef = React.useRef(cellDates)
   const latestUseJulianRef = React.useRef(useJulian)
-  latestDateRef.current = date
-  latestDisplayedFormatRef.current = displayedFormat
-  latestCellDatesRef.current = cellDates
-  latestUseJulianRef.current = useJulian
+  React.useEffect(() => {
+    latestDateRef.current = date
+    latestDisplayedFormatRef.current = displayedFormat
+    latestCellDatesRef.current = cellDates
+    latestUseJulianRef.current = useJulian
+  })
   const wasOpenRef = React.useRef(isControlled ? !!controlledOpen : false)
   // closingRef is true between the moment the panel begins closing and the moment the
   // CODES_CLOSE_MS timer fires. While true, dep changes (e.g. user clicks Forward within
@@ -138,14 +146,22 @@ export function MethodBreakdownSection({
   const closingRef = React.useRef(false)
   const key = date ? `${date.y}-${date.m}-${date.d}` : ''
   React.useEffect(() => {
+    // Auto-close the uncontrolled panel on a date change — a reaction to a prop change with no
+    // render-time equivalent that preserves the exact close timing the tests lock in.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!isControlled) setInternalOpen(false)
   }, [key, isControlled])
   const hasDate = !!date
   React.useEffect(() => {
     if (hasDate) return
+    // Date removed: close the panel. Controlled → notify the parent (a side effect that must
+    // live in an effect); uncontrolled → reset our own open state.
     if (isControlled) {
       if (controlledOpen) onOpenChange?.(false)
-    } else setInternalOpen(false)
+    } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setInternalOpen(false)
+    }
   }, [hasDate, isControlled, controlledOpen, onOpenChange])
   const open = hasDate ? (isControlled ? !!controlledOpen : internalOpen) : false
   const toggle = () => {
@@ -168,6 +184,12 @@ export function MethodBreakdownSection({
   // Mutators that honor this contract: pushAndNext, goBack, goForward,
   // runDeductionRound, sctn, the dedType useEffect, handleResetStats, the blitz
   // config-change effect.
+  /* The freeze effect below is a genuine timer mechanism: it mirrors frozen←live while the panel
+     is open and, on close, HOLDS the frozen snapshot for CODES_CLOSE_MS before releasing it to the
+     latest values. The synchronous setState (mirror-while-open / immediate-when-not-animating) has
+     no render-time equivalent for a *timed* state release, and the deps intentionally use
+     cellDatesKey (a content-stable proxy) instead of the identity-unstable cellDates array. */
+  /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   React.useEffect(() => {
     if (!date) return
     if (open) {
@@ -197,6 +219,7 @@ export function MethodBreakdownSection({
       setFrozenUseJulian(useJulian)
     }
   }, [open, date, displayedFormat, useJulian, cellDatesKey])
+  /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   return (
     <div className={className ?? 'mt-5'}>
       <button
