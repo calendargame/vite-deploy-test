@@ -332,8 +332,10 @@ interface DedOpts {
         {label:"Average",value:fmtTime(sAvg),off:tOff,fn:tFn},
         {label:"Median",value:fmtTime(sMed),off:tOff,fn:tFn},
       ];
-      const armedSpan=(timingArmed&&saveStats)?{startIdx:3,endIdx:5,label:"Enable and Reset Stats?",onClick:toggleTimingOff,btnRef:timingArmBtnRef}:null;
-      return {scoringOff,timingArmed,statsArr,armedSpan};
+      const armedSpan=(timingArmed&&saveStats)?{startIdx:3,endIdx:5,label:"Enable and Reset Stats?",onClick:toggleTimingOff}:null;
+      // armedBtnRef is returned separately (not nested in armedSpan) so StatPanel's plain
+      // armedSpan data stays ref-free — see the note in StatPanel.tsx.
+      return {scoringOff,timingArmed,statsArr,armedSpan,armedBtnRef:timingArmBtnRef};
     }
     // Run fn() whenever any value in `deps` changes — skipping the initial mount. The generic
     // "react to a settings/toggle change" effect the modes use to regen an unanswered live date
@@ -817,7 +819,7 @@ interface DedOpts {
       const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
       // Hideable stats chrome (show/hide toggles + two-tap "Enable and Reset Stats?" arm + the 6-box
       // stats strip), shared with Flash/Deduction via useStatsHideToggles.
-      const {scoringOff,timingArmed,statsArr,armedSpan}=useStatsHideToggles({eng,saveStats,visible,timingOff,setTimingOff});
+      const {scoringOff,timingArmed,statsArr,armedSpan,armedBtnRef}=useStatsHideToggles({eng,saveStats,visible,timingOff,setTimingOff});
       const optionsDisabled=state.locked||state.calcOpen||state.calcPenaltyActive;
       const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
@@ -839,7 +841,7 @@ interface DedOpts {
       const date=state.date;
       return(
         <div style={{display:visible?"block":"none"}}>
-          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan}/></div>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan} armedBtnRef={armedBtnRef}/></div>
           <div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={eng.resetStats}>Reset Stats</button></div>
           <div className="mt-5">
             <div className="mt-4 rounded-2xl panel p-4">
@@ -951,7 +953,7 @@ interface DedOpts {
       // Hideable stats chrome shared with Classic/Deduction. Flash supplies its flash-timer teardown:
       // afterTimingEnabled (re-enabling timing while a flash is live stops it + hides its date) and
       // onHide (leaving the mode stops a live flash). Classic/Deduction pass neither (no timer).
-      const {scoringOff,timingArmed,statsArr,armedSpan}=useStatsHideToggles({
+      const {scoringOff,timingArmed,statsArr,armedSpan,armedBtnRef}=useStatsHideToggles({
         eng,saveStats,visible,timingOff,setTimingOff,
         afterTimingEnabled:()=>{if(active){setActive(false);stopFlash();}setShowTimerDate(false);},
         onHide:()=>{if(active){setActive(false);stopFlash();}},
@@ -977,7 +979,7 @@ interface DedOpts {
       const dateText=shouldShowTimerDate?(flashHiding?"…":fmtDate(date.y,date.m,date.d,date._fmt)):"—";
       return(
         <div style={{display:visible?"block":"none"}}>
-          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan}/></div>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan} armedBtnRef={armedBtnRef}/></div>
           <div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={onResetStats}>Reset Stats</button></div>
           <div className="mt-3"><div className="flex items-center gap-2"><input type="range" min="100" max="3000" step="100" value={flashMs} onChange={e=>{const v=+e.target.value;setFlashMs(v);if(!active){setFlashRemainMs(v);resetFlashBar();}}} disabled={active} style={{"--rng-fill":Math.round((flashMs-100)/2900*100)+"%"} as React.CSSProperties} className="flex-1 disabled:opacity-40"/><span className="tabular-nums text-xs w-10 shrink-0 text-right">{fmtFlashT(flashMs)}</span></div></div>
           <div className="mt-5">
@@ -1266,7 +1268,7 @@ interface DedOpts {
       // directly on sub-type switch (changeDedType), so it's destructured alongside the pulse setter.
       const {flash,setFlash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
       // Hideable stats chrome shared with Classic/Flash — operates on the ACTIVE sub-mode's engine.
-      const {scoringOff,timingArmed,statsArr,armedSpan}=useStatsHideToggles({eng,saveStats,visible,timingOff,setTimingOff});
+      const {scoringOff,timingArmed,statsArr,armedSpan,armedBtnRef}=useStatsHideToggles({eng,saveStats,visible,timingOff,setTimingOff});
 
       const fmtDatePartial=(y: number,m: number,d: number,storedFmt: FormatId | undefined,missing: DatePart)=>fmtPartial(y,m,d,storedFmt||dateFormat,missing);
       const centerLastOpt=(index: number,total: number)=>{if(total<=0)return"";if(index===total-1&&total%3===1)return"col-span-3";return"";};
@@ -1323,7 +1325,7 @@ interface DedOpts {
 
       return(
         <div style={{display:visible?"block":"none"}}>
-          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan}/></div>
+          <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan} armedBtnRef={armedBtnRef}/></div>
           <div className="mt-3"><button type="button" data-key="S" className={RESET_STATS_BTN_CLASS} onClick={eng.resetStats}>Reset Stats</button></div>
           <div className="mt-5">
             <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">

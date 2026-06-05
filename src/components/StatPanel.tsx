@@ -30,9 +30,20 @@ export interface ArmedSpan {
   endIdx: number
   label: ReactNode
   onClick?: () => void
-  btnRef?: Ref<HTMLButtonElement>
 }
-export default function StatPanel({ stats, armedSpan }: { stats: StatItem[]; armedSpan?: ArmedSpan | null }) {
+// The armed-button ref is passed SEPARATELY from `armedSpan` (not nested inside it).
+// Bundling a ref into a data object makes React's compiler treat every read of that
+// object as a ref access during render, so it's kept apart: `armedSpan` is plain data,
+// `armedBtnRef` is the ref, forwarded straight to the button's `ref=` (an allowed use).
+export default function StatPanel({
+  stats,
+  armedSpan,
+  armedBtnRef,
+}: {
+  stats: StatItem[]
+  armedSpan?: ArmedSpan | null
+  armedBtnRef?: Ref<HTMLButtonElement>
+}) {
   // For fractional values (Score, Streak as "X/Y"), shrink the value font
   // when either side reaches 1000+ or 10000+ to prevent overflow on long
   // sessions. Non-fractional values (Accuracy, Last, Average, Median)
@@ -70,7 +81,7 @@ export default function StatPanel({ stats, armedSpan }: { stats: StatItem[]; arm
             items.push(
               <button
                 key="armed-warning"
-                ref={armedSpan.btnRef}
+                ref={armedBtnRef}
                 type="button"
                 onClick={armedSpan.onClick}
                 style={{ flex: span }}
