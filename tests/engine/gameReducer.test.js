@@ -13,12 +13,21 @@ const W = (C + 1) % 7 // a wrong index
 
 // Default play context: Gregorian, Save Stats on, timing hidden (Classic default).
 const ctx = { useJulian: false, saveStats: true, tracking: false }
-const answer = (s, idx, extra = {}) => gameReducer(s, { type: 'ANSWER', idx, nextDate: NEXT, ...ctx, ...extra })
+const answer = (s, idx, extra = {}) =>
+  gameReducer(s, { type: 'ANSWER', idx, nextDate: NEXT, ...ctx, ...extra })
 const reveal = (s, extra = {}) => gameReducer(s, { type: 'REVEAL', ...ctx, ...extra })
-const showCodes = (s, open = true, extra = {}) => gameReducer(s, { type: 'SHOW_CODES', open, ...ctx, ...extra })
+const showCodes = (s, open = true, extra = {}) =>
+  gameReducer(s, { type: 'SHOW_CODES', open, ...ctx, ...extra })
 const neu = (s, extra = {}) => gameReducer(s, { type: 'NEW', nextDate: NEXT, ...ctx, ...extra })
 const override = (s, extra = {}) =>
-  gameReducer(s, { type: 'OVERRIDE', useJulian: false, tracking: false, timingOff: true, nextDate: NEXT, ...extra })
+  gameReducer(s, {
+    type: 'OVERRIDE',
+    useJulian: false,
+    tracking: false,
+    timingOff: true,
+    nextDate: NEXT,
+    ...extra,
+  })
 const back = (s) => gameReducer(s, { type: 'BACK' })
 const forward = (s) => gameReducer(s, { type: 'FORWARD', useJulian: false })
 
@@ -44,7 +53,12 @@ describe('gameReducer — ANSWER', () => {
     expect(s.stack[0].btns).toEqual({ [C]: 'correct' })
     // The history entry carries the pre-answer snapshot (so Override can reverse it later).
     expect(s.stack[0].capsule.snapshot).toEqual({
-      played: 0, good: 0, streak: 0, best: 0, timesLen: 0, wasWrong: false,
+      played: 0,
+      good: 0,
+      streak: 0,
+      best: 0,
+      timesLen: 0,
+      wasWrong: false,
     })
     expect(s.pendingWrongOverride).toBe(null)
   })
@@ -256,7 +270,11 @@ describe('gameReducer — LOCK_REVEAL / TIMEOUT_MISS (Blitz timeouts)', () => {
   })
 
   it('TIMEOUT_MISS counts a played miss + shows the answer (per-question timeout)', () => {
-    const s = gameReducer(initEngine(DATE), { type: 'TIMEOUT_MISS', useJulian: false, saveStats: true })
+    const s = gameReducer(initEngine(DATE), {
+      type: 'TIMEOUT_MISS',
+      useJulian: false,
+      saveStats: true,
+    })
     expect(s.stats).toMatchObject({ played: 1, good: 0, streak: 0 })
     expect(s.persistBtns).toEqual({ [C]: 'correct' })
     expect(s.countedWrong).toBe(false) // distinct from REVEAL — no Override path
@@ -325,7 +343,12 @@ describe('gameReducer — complete (AoX last solve) + noAdvance (AoX failing ove
   it('OVERRIDE noAdvance: reverses the completing solve without advancing (run fails in place)', () => {
     let s = answer(initEngine(DATE), C, { complete: true, elapsed: 0.5, tracking: true })
     s = gameReducer(s, {
-      type: 'OVERRIDE', useJulian: false, tracking: true, timingOff: false, noAdvance: true, nextDate: NEXT,
+      type: 'OVERRIDE',
+      useJulian: false,
+      tracking: true,
+      timingOff: false,
+      noAdvance: true,
+      nextDate: NEXT,
     })
     expect(s.stats.good).toBe(0) // credit reversed
     expect(s.stats.played).toBe(1) // the attempt still counts
@@ -334,7 +357,13 @@ describe('gameReducer — complete (AoX last solve) + noAdvance (AoX failing ove
 
   it('OVERRIDE without noAdvance (timing on) advances after reversing (the Classic/Blitz path is intact)', () => {
     let s = answer(initEngine(DATE), C, { complete: true, elapsed: 0.5, tracking: true })
-    s = gameReducer(s, { type: 'OVERRIDE', useJulian: false, tracking: true, timingOff: false, nextDate: NEXT })
+    s = gameReducer(s, {
+      type: 'OVERRIDE',
+      useJulian: false,
+      tracking: true,
+      timingOff: false,
+      nextDate: NEXT,
+    })
     expect(s.date).toBe(NEXT) // advanced
   })
 })

@@ -41,7 +41,9 @@ for (const f of files.sort()) {
   const raw = readFileSync(join(ASSETS_DIR, f))
   const gzipKb = gzipSync(raw, { level: 9 }).length / 1024
   totalGzipKb += gzipKb
-  console.log(`  ${f.padEnd(28)} ${gzipKb.toFixed(2).padStart(8)} KB gzip  (${(raw.length / 1024).toFixed(1)} KB raw)`)
+  console.log(
+    `  ${f.padEnd(28)} ${gzipKb.toFixed(2).padStart(8)} KB gzip  (${(raw.length / 1024).toFixed(1)} KB raw)`,
+  )
 }
 
 console.log('')

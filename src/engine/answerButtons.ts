@@ -80,12 +80,14 @@ export const entryWithGreen = <T extends EntryLike>(
     if (entry.type === 'year' && entry.options)
       correctIdx = entry.options.findIndex((yy) => yy === entry.y)
     else if (entry.type === 'month') {
-      if (entry.boxes) correctIdx = entry.boxes.findIndex((b) => b.months && b.months.includes(entry.m))
+      if (entry.boxes)
+        correctIdx = entry.boxes.findIndex((b) => b.months && b.months.includes(entry.m))
       else if (entry.options) correctIdx = entry.options.findIndex((mm) => mm === entry.m)
     } else if (entry.type === 'day' && entry.options)
       correctIdx = entry.options.findIndex((dd) => dd === entry.d)
   } else {
-    const useJul = (entry._jul != null ? entry._jul : fallbackJulian) && isJulianDate(entry.y, entry.m, entry.d)
+    const useJul =
+      (entry._jul != null ? entry._jul : fallbackJulian) && isJulianDate(entry.y, entry.m, entry.d)
     correctIdx = useJul ? wdayJulian(entry.y, entry.m, entry.d) : wday(entry.y, entry.m, entry.d)
   }
   if (correctIdx < 0) return entry

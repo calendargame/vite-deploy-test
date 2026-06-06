@@ -94,7 +94,7 @@ export const makeProgressDefaults = (): ProgressValues => ({
 })
 
 // resolve(next, prev): support React-style functional updaters (prev => next), like settings.
-const resolve = <T,>(next: Updater<T>, prev: T): T =>
+const resolve = <T>(next: Updater<T>, prev: T): T =>
   typeof next === 'function' ? (next as (prev: T) => T)(prev) : (next as T)
 
 const PERSISTED_KEYS: (keyof ProgressValues)[] = [

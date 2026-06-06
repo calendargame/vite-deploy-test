@@ -35,8 +35,18 @@ export interface UseGameEngineOptions {
   getInitialStats?: () => Stats
 }
 
-export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timingOff, getInitialStats }: UseGameEngineOptions) {
-  const [state, dispatch] = useReducer(gameReducer, undefined, () => initEngine(genDate(minY, maxY), getInitialStats?.()))
+export function useGameEngine({
+  genDate,
+  minY,
+  maxY,
+  useJulian,
+  saveStats,
+  timingOff,
+  getInitialStats,
+}: UseGameEngineOptions) {
+  const [state, dispatch] = useReducer(gameReducer, undefined, () =>
+    initEngine(genDate(minY, maxY), getInitialStats?.()),
+  )
 
   // The solve-timer starts when a NEW question is shown (advance / New / Reset bump
   // questionId). Back/Forward change `date` to a browsed entry but leave questionId
@@ -84,14 +94,31 @@ export function useGameEngine({ genDate, minY, maxY, useJulian, saveStats, timin
   // `opts.complete` (AoX): credit this correct answer but don't advance — the run's last solve
   // stays on screen, locked + reversible. Other modes call answer(idx) → complete undefined.
   const answer = (idx: number, opts?: { complete?: boolean }) =>
-    dispatch({ type: 'ANSWER', idx, useJulian, elapsed: elapsed(), tracking, saveStats, nextDate: newDate(), complete: opts?.complete })
+    dispatch({
+      type: 'ANSWER',
+      idx,
+      useJulian,
+      elapsed: elapsed(),
+      tracking,
+      saveStats,
+      nextDate: newDate(),
+      complete: opts?.complete,
+    })
   const reveal = () => dispatch({ type: 'REVEAL', useJulian, elapsed: elapsed(), saveStats })
-  const showCodes = (open: boolean) => dispatch({ type: 'SHOW_CODES', open, useJulian, elapsed: elapsed(), saveStats })
+  const showCodes = (open: boolean) =>
+    dispatch({ type: 'SHOW_CODES', open, useJulian, elapsed: elapsed(), saveStats })
   const doNew = () => dispatch({ type: 'NEW', useJulian, saveStats, nextDate: newDate() })
   // `opts.noAdvance` (AoX): when an override reverses the run's completing solve and fails the run
   // (Allow Mistakes off), don't advance — stay on the question. Other modes call override().
   const override = (opts?: { noAdvance?: boolean }) =>
-    dispatch({ type: 'OVERRIDE', useJulian, tracking, timingOff, nextDate: newDate(), noAdvance: opts?.noAdvance })
+    dispatch({
+      type: 'OVERRIDE',
+      useJulian,
+      tracking,
+      timingOff,
+      nextDate: newDate(),
+      noAdvance: opts?.noAdvance,
+    })
   const back = () => dispatch({ type: 'BACK' })
   const forward = () => dispatch({ type: 'FORWARD', useJulian })
   const resetStats = () => dispatch({ type: 'RESET', timingOff, nextDate: newDate() })

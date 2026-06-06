@@ -42,7 +42,9 @@ export function MethodExplanation({
   // array that under-specified `date` (it listed date?.y/m/d, not the object the call reads).
   const summaries: MethodSummary[] =
     cellDates && cellDates.length > 0
-      ? cellDates.map((cd) => computeMethodSummary(cd, true)).filter((s): s is MethodSummary => s != null)
+      ? cellDates
+          .map((cd) => computeMethodSummary(cd, true))
+          .filter((s): s is MethodSummary => s != null)
       : date
         ? [computeMethodSummary(date, useJulian)].filter((s): s is MethodSummary => s != null)
         : []

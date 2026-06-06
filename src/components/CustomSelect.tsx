@@ -146,7 +146,9 @@ export default function CustomSelect({
         e.preventDefault()
         // First arrow (from the no-cursor -1 state) reveals the box ON the selected option;
         // subsequent arrows move it. So the cursor first appears where the ✓ is.
-        setActiveIdx((i) => (i < 0 ? (selectedIdx >= 0 ? selectedIdx : 0) : Math.min(options.length - 1, i + 1)))
+        setActiveIdx((i) =>
+          i < 0 ? (selectedIdx >= 0 ? selectedIdx : 0) : Math.min(options.length - 1, i + 1),
+        )
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         setActiveIdx((i) => (i < 0 ? (selectedIdx >= 0 ? selectedIdx : 0) : Math.max(0, i - 1)))

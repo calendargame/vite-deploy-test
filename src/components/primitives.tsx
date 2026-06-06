@@ -22,7 +22,13 @@ const KBD_CLASS =
   'inline-block panel rounded-sm px-1.5 py-0.5 text-[11px] font-mono min-w-6 text-center shrink-0'
 
 export const NewBestStar = () => <sup className={NEW_BEST_STAR_CLASS}>★</sup>
-export const SectionLabel = ({ children, className = '' }: { children?: ReactNode; className?: string }) => (
-  <div className={`${SECTION_LABEL_CLASS}${className ? ' ' + className : ''}`}>{children}</div>
+export const SectionLabel = ({
+  children,
+  className = '',
+}: {
+  children?: ReactNode
+  className?: string
+}) => <div className={`${SECTION_LABEL_CLASS}${className ? ' ' + className : ''}`}>{children}</div>
+export const Kbd = ({ children }: { children?: ReactNode }) => (
+  <kbd className={KBD_CLASS}>{children}</kbd>
 )
-export const Kbd = ({ children }: { children?: ReactNode }) => <kbd className={KBD_CLASS}>{children}</kbd>

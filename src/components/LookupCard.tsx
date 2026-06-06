@@ -115,7 +115,10 @@ export default function LookupCard({
   // date becomes null (e.g., clicking a "Does Not Exist" gap entry). Earlier per-entry
   // tracking via calcOpenByEntry was removed because it made codes auto-close on
   // every history click that landed on an entry whose codes had never been opened.
-  const sco = typeof onCalcOpenChange === 'function' ? (next: boolean) => onCalcOpenChange?.(!!next) : () => {}
+  const sco =
+    typeof onCalcOpenChange === 'function'
+      ? (next: boolean) => onCalcOpenChange?.(!!next)
+      : () => {}
   const lastLookupRef = React.useRef<string | null>(null)
   const lookupInputRef = React.useRef<HTMLInputElement>(null)
   // LookupCard uses module-level isLeap/dim/wday/numericFormatOf — no local duplicates.

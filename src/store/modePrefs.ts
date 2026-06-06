@@ -88,7 +88,7 @@ export const MODE_PREFS_DEFAULTS: ModePrefsValues = {
 }
 
 // resolve(next, prev): support React-style functional updaters.
-const resolve = <T,>(next: Updater<T>, prev: T): T =>
+const resolve = <T>(next: Updater<T>, prev: T): T =>
   typeof next === 'function' ? (next as (prev: T) => T)(prev) : (next as T)
 
 // The set of keys we persist — exactly the data values (not the setters).
@@ -104,15 +104,19 @@ export const useModePrefs = create<ModePrefsState>()(
       setBlitzSec: (v) => set((s) => ({ blitzSec: resolve(v, s.blitzSec) })),
       setBlitzQSec: (v) => set((s) => ({ blitzQSec: resolve(v, s.blitzQSec) })),
       setBlitzPerQ: (v) => set((s) => ({ blitzPerQ: resolve(v, s.blitzPerQ) })),
-      setBlitzAllowMistakes: (v) => set((s) => ({ blitzAllowMistakes: resolve(v, s.blitzAllowMistakes) })),
+      setBlitzAllowMistakes: (v) =>
+        set((s) => ({ blitzAllowMistakes: resolve(v, s.blitzAllowMistakes) })),
       setAoxN: (v) => set((s) => ({ aoxN: resolve(v, s.aoxN) })),
-      setAoxAllowMistakes: (v) => set((s) => ({ aoxAllowMistakes: resolve(v, s.aoxAllowMistakes) })),
+      setAoxAllowMistakes: (v) =>
+        set((s) => ({ aoxAllowMistakes: resolve(v, s.aoxAllowMistakes) })),
       setAoxOneByOne: (v) => set((s) => ({ aoxOneByOne: resolve(v, s.aoxOneByOne) })),
       setDedType: (v) => set((s) => ({ dedType: resolve(v, s.dedType) })),
       setDedTimingOff: (v) => set((s) => ({ dedTimingOff: resolve(v, s.dedTimingOff) })),
       setDedScoringOff: (v) => set((s) => ({ dedScoringOff: resolve(v, s.dedScoringOff) })),
-      setClassicTimingOff: (v) => set((s) => ({ classicTimingOff: resolve(v, s.classicTimingOff) })),
-      setClassicScoringOff: (v) => set((s) => ({ classicScoringOff: resolve(v, s.classicScoringOff) })),
+      setClassicTimingOff: (v) =>
+        set((s) => ({ classicTimingOff: resolve(v, s.classicTimingOff) })),
+      setClassicScoringOff: (v) =>
+        set((s) => ({ classicScoringOff: resolve(v, s.classicScoringOff) })),
       // Reset every mode pref to its launch default in one shot. Because the store is
       // persisted, this also overwrites the saved copy back to defaults (Full Reset).
       resetModePrefs: () => set(() => ({ ...MODE_PREFS_DEFAULTS })),

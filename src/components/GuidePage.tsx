@@ -9,7 +9,19 @@ import { Kbd } from './primitives.jsx'
 //
 // Extracted from main.jsx in Stage C, Step 4e (verbatim prose). GuideSection is
 // exported named; GuidePage is the default export.
-export function GuideSection({ id, title, children, openId, onToggle }: { id: string; title: ReactNode; children?: ReactNode; openId: string | null; onToggle: (id: string) => void }) {
+export function GuideSection({
+  id,
+  title,
+  children,
+  openId,
+  onToggle,
+}: {
+  id: string
+  title: ReactNode
+  children?: ReactNode
+  openId: string | null
+  onToggle: (id: string) => void
+}) {
   const isOpen = openId === id
   return (
     <div className="rounded-2xl panel overflow-hidden">
@@ -62,9 +74,9 @@ export default function GuidePage() {
         </p>
         <p className="mt-2">
           It runs entirely in your browser and saves your progress on this device. You can add it to
-          your home screen and use it like an app — on iPhone via Safari's Share button → Add to Home
-          Screen, on Android via Chrome's Install app / Add to Home screen — and once it has loaded it
-          works fully offline, with no connection needed to practice.
+          your home screen and use it like an app — on iPhone via Safari's Share button → Add to
+          Home Screen, on Android via Chrome's Install app / Add to Home screen — and once it has
+          loaded it works fully offline, with no connection needed to practice.
         </p>
         <p className="mt-2">
           It pairs with the book{' '}
@@ -141,9 +153,9 @@ export default function GuidePage() {
         <p>
           <b>Show Codes</b> — reveals the calculation codes for the current date. Counts as wrong if
           you haven't already answered incorrectly. No penalty on unanswered dates while browsing
-          back. In Blitz, opening Show Codes during a round ends the round and records your bests; in
-          Flash it freezes the countdown so the date stays on screen while you study the codes. In AoX
-          without Allow Mistakes, opening Show Codes ends the run.
+          back. In Blitz, opening Show Codes during a round ends the round and records your bests;
+          in Flash it freezes the countdown so the date stays on screen while you study the codes.
+          In AoX without Allow Mistakes, opening Show Codes ends the run.
         </p>
       </GuideSection>
       <GuideSection id="stats" title="Stats" openId={open} onToggle={toggle}>
@@ -388,15 +400,14 @@ export default function GuidePage() {
           initial launch state. Wipes all stats, all-time bests (Blitz, Sudden, AoX), Lookup
           history, and in-progress rounds and runs. Your stats, all-time bests, and Lookup history
           are saved on this device and restored on your next visit, so Full Reset clears that saved
-          copy permanently. Resets every setting and toggle across all modes
-          — both the ⚙ menu and the per-mode toggles (AoX N, timer durations, Deduction sub-types
-          and toggles, Allow Mistakes, Save Stats, Stop Codes, etc.). Closes any open overlay (How
-          to Play, ⚙ menu, codes, method breakdown) and switches to Classic. Requires two taps to
-          confirm: tap once and the button changes to "Confirm?"; tap again to fire. Auto-cancels
-          after a few seconds, when you close ⚙, or if you tap any other control. When every
-          setting, toggle, stat, best, history entry, and live state across the entire site is
-          already at its launch value, this button dims and locks since tapping it would have no
-          effect.
+          copy permanently. Resets every setting and toggle across all modes — both the ⚙ menu and
+          the per-mode toggles (AoX N, timer durations, Deduction sub-types and toggles, Allow
+          Mistakes, Save Stats, Stop Codes, etc.). Closes any open overlay (How to Play, ⚙ menu,
+          codes, method breakdown) and switches to Classic. Requires two taps to confirm: tap once
+          and the button changes to "Confirm?"; tap again to fire. Auto-cancels after a few seconds,
+          when you close ⚙, or if you tap any other control. When every setting, toggle, stat, best,
+          history entry, and live state across the entire site is already at its launch value, this
+          button dims and locks since tapping it would have no effect.
         </p>
       </GuideSection>
       <GuideSection id="keyboard" title="Keyboard Input" openId={open} onToggle={toggle}>
@@ -689,8 +700,8 @@ export default function GuidePage() {
         <p>
           While the date is showing you can also press Reveal or Show Codes — both freeze the
           countdown (the timer bar and the number stop together) and keep the date on screen. Reveal
-          shows the answer and counts a miss; Show Codes does the same and also opens the calculation
-          breakdown.
+          shows the answer and counts a miss; Show Codes does the same and also opens the
+          calculation breakdown.
         </p>
       </GuideSection>
       <GuideSection id="blitz" title="Blitz" openId={open} onToggle={toggle}>
@@ -712,10 +723,10 @@ export default function GuidePage() {
         <p>
           When the round ends, the correct answer for the current date is highlighted and your bests
           are recorded. A round also ends if you give up on the current date with Reveal or Show
-          Codes, or — with Allow Mistakes off (or in Per Question) — if you override a correct answer
-          to wrong. You can then browse your round's history with Back/Forward and override past
-          dates to adjust your score and saved bests. Overriding a wrong answer that ended the round
-          resumes it.
+          Codes, or — with Allow Mistakes off (or in Per Question) — if you override a correct
+          answer to wrong. You can then browse your round's history with Back/Forward and override
+          past dates to adjust your score and saved bests. Overriding a wrong answer that ended the
+          round resumes it.
         </p>
         <p>
           Streak is hidden in Per Question since any wrong answer ends the round, making streak

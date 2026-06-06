@@ -13,7 +13,14 @@ import { wday } from '../../src/lib/calendar.js'
 const genDate = () => ({ y: 2024, m: 1, d: 1, _fmt: 'numeric-ymd', _jul: false })
 const C = wday(2024, 1, 1)
 const W = (C + 1) % 7
-const opts = { genDate, minY: 1583, maxY: 10000, useJulian: false, saveStats: true, timingOff: true }
+const opts = {
+  genDate,
+  minY: 1583,
+  maxY: 10000,
+  useJulian: false,
+  saveStats: true,
+  timingOff: true,
+}
 
 describe('useGameEngine', () => {
   it('mounts with a generated question and the derived correct weekday', () => {

@@ -32,7 +32,10 @@ export default defineConfig([
       // `ignoreRestSiblings` permits the intentional "strip fields via rest" destructure
       // (e.g. `const {btns, isLive, ...date}=e` in gameReducer's stripEntryMeta); the `^_`
       // pattern still marks any other deliberate discard.
-      'no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      'no-unused-vars': [
+        'error',
+        { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       // React-Compiler hook rules run at their recommended severities (the Stage-D deferral is over:
       // the compiler is enabled in vite.config and every violation was fixed at the source). The
       // compiler-correctness rules — refs, purity, immutability, set-state-in-effect,
@@ -60,7 +63,10 @@ export default defineConfig([
     extends: [tseslint.configs.recommended],
     rules: {
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { varsIgnorePattern: '^_', argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
     },
   },
   {

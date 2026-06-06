@@ -28,7 +28,9 @@ describe('progress store', () => {
   })
 
   it('setModeStats updates one silo and leaves the others blank', () => {
-    useProgress.getState().setModeStats('classic', { played: 5, good: 4, streak: 2, best: 3, times: [1.1, 2.2] })
+    useProgress
+      .getState()
+      .setModeStats('classic', { played: 5, good: 4, streak: 2, best: 3, times: [1.1, 2.2] })
     const s = useProgress.getState()
     expect(s.stats.classic).toEqual({ played: 5, good: 4, streak: 2, best: 3, times: [1.1, 2.2] })
     expect(s.stats.flash).toEqual(blank)
@@ -36,17 +38,32 @@ describe('progress store', () => {
   })
 
   it('setModeStats accepts a functional updater', () => {
-    useProgress.getState().setModeStats('flash', { played: 1, good: 1, streak: 1, best: 1, times: [] })
-    useProgress.getState().setModeStats('flash', (prev) => ({ ...prev, played: prev.played + 1, good: prev.good + 1 }))
-    expect(useProgress.getState().stats.flash).toEqual({ played: 2, good: 2, streak: 1, best: 1, times: [] })
+    useProgress
+      .getState()
+      .setModeStats('flash', { played: 1, good: 1, streak: 1, best: 1, times: [] })
+    useProgress
+      .getState()
+      .setModeStats('flash', (prev) => ({ ...prev, played: prev.played + 1, good: prev.good + 1 }))
+    expect(useProgress.getState().stats.flash).toEqual({
+      played: 2,
+      good: 2,
+      streak: 1,
+      best: 1,
+      times: [],
+    })
   })
 
   it('best setters accept direct values and functional updaters', () => {
-    useProgress.getState().setBlitzBest({ k1: { score: 7, streak: 5, scoreRoundId: 1, streakRoundId: 1 } })
+    useProgress
+      .getState()
+      .setBlitzBest({ k1: { score: 7, streak: 5, scoreRoundId: 1, streakRoundId: 1 } })
     expect(useProgress.getState().blitzBest.k1.score).toBe(7)
     useProgress.getState().setSuddenBest((p) => ({ ...p, k2: { score: 3, roundId: 2 } }))
     expect(useProgress.getState().suddenBest.k2.score).toBe(3)
-    useProgress.getState().setAoxBest((p) => ({ ...p, k3: { avg: 1.5, avgMed: 1.4, avgRoundId: 1, med: 1.4, medAvg: 1.5, medRoundId: 1 } }))
+    useProgress.getState().setAoxBest((p) => ({
+      ...p,
+      k3: { avg: 1.5, avgMed: 1.4, avgRoundId: 1, med: 1.4, medAvg: 1.5, medRoundId: 1 },
+    }))
     expect(useProgress.getState().aoxBest.k3.avg).toBe(1.5)
   })
 

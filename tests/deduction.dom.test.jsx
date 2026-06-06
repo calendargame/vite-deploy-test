@@ -82,8 +82,25 @@ function optState(btn) {
   return 'idle'
 }
 
-const MON3 = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 }
-const labelMonths = (lab) => lab.split('/').map((s) => MON3[s.trim()]).filter(Boolean)
+const MON3 = {
+  Jan: 1,
+  Feb: 2,
+  Mar: 3,
+  Apr: 4,
+  May: 5,
+  Jun: 6,
+  Jul: 7,
+  Aug: 8,
+  Sep: 9,
+  Oct: 10,
+  Nov: 11,
+  Dec: 12,
+}
+const labelMonths = (lab) =>
+  lab
+    .split('/')
+    .map((s) => MON3[s.trim()])
+    .filter(Boolean)
 
 // Read the live puzzle from the screen: the partial date (one slot is "__"), the shown weekday
 // index, the option labels, and the sub-mode (which slot is missing).

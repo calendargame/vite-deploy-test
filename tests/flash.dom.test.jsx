@@ -45,7 +45,9 @@ function readDate() {
     (e) => e.children.length === 0 && /^-?\d+-\d+-\d+$/.test(e.textContent.trim()) && !isHidden(e),
   )
   if (els.length !== 1)
-    throw new Error(`expected one visible ymd date, found ${els.length}: ${els.map((e) => e.textContent)}`)
+    throw new Error(
+      `expected one visible ymd date, found ${els.length}: ${els.map((e) => e.textContent)}`,
+    )
   const [y, m, d] = els[0].textContent.trim().split('-').map(Number)
   return { y, m, d }
 }

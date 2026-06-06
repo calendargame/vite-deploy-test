@@ -50,7 +50,9 @@ function readDate() {
     (e) => e.children.length === 0 && /^-?\d+-\d+-\d+$/.test(e.textContent.trim()) && !isHidden(e),
   )
   if (els.length !== 1)
-    throw new Error(`expected one visible ymd date, found ${els.length}: ${els.map((e) => e.textContent)}`)
+    throw new Error(
+      `expected one visible ymd date, found ${els.length}: ${els.map((e) => e.textContent)}`,
+    )
   const [y, m, d] = els[0].textContent.trim().split('-').map(Number)
   return { y, m, d }
 }
@@ -87,7 +89,9 @@ function bestVal(which) {
 }
 // The Ao-N size input (the only visible text input in the AoX panel).
 function setN(val) {
-  const input = Array.from(document.querySelectorAll('input[type="text"]')).find((i) => !isHidden(i))
+  const input = Array.from(document.querySelectorAll('input[type="text"]')).find(
+    (i) => !isHidden(i),
+  )
   act(() => {
     fireEvent.change(input, { target: { value: String(val) } })
     fireEvent.blur(input)
@@ -352,7 +356,8 @@ describe('AoX — characterization (batch 5: One-By-One)', () => {
     // Date hidden now → Continue is offered, and no visible ymd date is present.
     expect(ctrl('Continue')).toBeInTheDocument()
     const visibleYmd = Array.from(document.querySelectorAll('div')).filter(
-      (e) => e.children.length === 0 && /^-?\d+-\d+-\d+$/.test(e.textContent.trim()) && !isHidden(e),
+      (e) =>
+        e.children.length === 0 && /^-?\d+-\d+-\d+$/.test(e.textContent.trim()) && !isHidden(e),
     )
     expect(visibleYmd.length).toBe(0)
     click('Continue') // reveal the next date

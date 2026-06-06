@@ -45,7 +45,10 @@ describe('entryWithGreen', () => {
   })
   it('synthesizes a green on the correct weekday for a wrong-only date entry, demoting the wrong', () => {
     const ci = wday(2024, 1, 1) // the correct index for this date (Gregorian)
-    const result = entryWithGreen({ y: 2024, m: 1, d: 1, btns: { 3: 'wrong-latest' }, _jul: false }, false)
+    const result = entryWithGreen(
+      { y: 2024, m: 1, d: 1, btns: { 3: 'wrong-latest' }, _jul: false },
+      false,
+    )
     expect(result.btns[ci]).toBe('correct')
     expect(result.btns[3]).toBe('wrong-prev')
   })

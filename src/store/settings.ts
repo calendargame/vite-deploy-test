@@ -81,7 +81,7 @@ export const SETTINGS_DEFAULTS: SettingsValues = {
 }
 
 // resolve(next, prev): support React-style functional updaters.
-const resolve = <T,>(next: Updater<T>, prev: T): T =>
+const resolve = <T>(next: Updater<T>, prev: T): T =>
   typeof next === 'function' ? (next as (prev: T) => T)(prev) : (next as T)
 
 // The set of keys we persist — exactly the data values (not the setters).

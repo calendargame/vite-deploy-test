@@ -8,7 +8,13 @@
 // for light/parchment) — no per-theme overrides needed. Decorative (aria-hidden); the adjacent
 // <h1> carries the accessible name. The viewBox tightly frames the glyph (drawn in the icon's
 // 512 coordinate space) so it sits at text height without the icon's purple tile/background.
-export default function W5Logo({ className = '', size = 26 }: { className?: string; size?: number }) {
+export default function W5Logo({
+  className = '',
+  size = 26,
+}: {
+  className?: string
+  size?: number
+}) {
   const width = Math.round((146 / 158) * size)
   return (
     <svg

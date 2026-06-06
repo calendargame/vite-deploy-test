@@ -180,7 +180,13 @@ export type GameAction =
       complete?: boolean
     }
   | { type: 'REVEAL'; useJulian: boolean; elapsed: number | null; saveStats: boolean }
-  | { type: 'SHOW_CODES'; open: boolean; useJulian: boolean; elapsed: number | null; saveStats: boolean }
+  | {
+      type: 'SHOW_CODES'
+      open: boolean
+      useJulian: boolean
+      elapsed: number | null
+      saveStats: boolean
+    }
   | { type: 'RESET'; timingOff: boolean; nextDate: Question }
   | { type: 'REGEN_DATE'; nextDate: Question }
   | { type: 'LOCK_REVEAL'; useJulian: boolean }
@@ -229,8 +235,15 @@ const oneBtn = (idx: number, s: ButtonState): Btns => {
 // fields — so FORWARD restores a clean `date` that still keeps Deduction's puzzle fields
 // (type/options/w/…), not only y/m/d/_fmt/_jul. For weekday entries the result is exactly
 // {y,m,d,_fmt,_jul}, identical to the previous explicit field pick.
-const stripEntryMeta = ({ btns, overrideUsed, capsule, hasCredit, isLive, liveState, ...date }: StackEntry): Question =>
-  date
+const stripEntryMeta = ({
+  btns,
+  overrideUsed,
+  capsule,
+  hasCredit,
+  isLive,
+  liveState,
+  ...date
+}: StackEntry): Question => date
 
 const blankStats = (): Stats => ({ played: 0, good: 0, streak: 0, best: 0, times: [] })
 
@@ -270,7 +283,12 @@ const effectiveSaveStats = (state: GameState, saveStats: boolean): boolean =>
 // pendingWrongOverride is armed when the finished question had been counted wrong.
 const advance = (
   state: GameState,
-  { nextDate, useJulian, finalBtns, saved }: { nextDate: Question; useJulian: boolean; finalBtns?: Btns; saved: boolean },
+  {
+    nextDate,
+    useJulian,
+    finalBtns,
+    saved,
+  }: { nextDate: Question; useJulian: boolean; finalBtns?: Btns; saved: boolean },
 ): GameState => {
   const btns = finalBtns ?? state.persistBtns
   const wasAnswered = Object.keys(btns).length > 0
@@ -424,7 +442,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const { useJulian, elapsed, saveStats } = action
       const correct = correctIndexOf(state.date, useJulian)
       if (state.locked && !state.revealed && state.backDepth > 0) {
-        return { ...state, persistBtns: mkBtnsWithCorrect(state.persistBtns, correct), revealed: true }
+        return {
+          ...state,
+          persistBtns: mkBtnsWithCorrect(state.persistBtns, correct),
+          revealed: true,
+        }
       }
       if (state.locked) return state
       const effective = effectiveSaveStats(state, saveStats)
@@ -454,7 +476,12 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       }
       const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
-      const next: GameState = { ...state, calcPenaltyActive: true, calcOpen: true, saveStatsThisQ: effective }
+      const next: GameState = {
+        ...state,
+        calcPenaltyActive: true,
+        calcOpen: true,
+        saveStatsThisQ: effective,
+      }
       const firstPenalty = !state.countedWrong && !state.revealed
       if (firstPenalty) {
         next.wrongTime = elapsed
@@ -510,7 +537,12 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case 'LOCK_REVEAL': {
       const { useJulian } = action
       const correct = correctIndexOf(state.date, useJulian)
-      return { ...state, persistBtns: mkBtnsWithCorrect(state.persistBtns, correct), locked: true, revealed: true }
+      return {
+        ...state,
+        persistBtns: mkBtnsWithCorrect(state.persistBtns, correct),
+        locked: true,
+        revealed: true,
+      }
     }
 
     // ── TIMEOUT_MISS ─────────────────────────────────────────────────────────────
@@ -521,7 +553,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const { useJulian, saveStats } = action
       const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
-      const stats = effective ? { ...state.stats, played: state.stats.played + 1, streak: 0 } : state.stats
+      const stats = effective
+        ? { ...state.stats, played: state.stats.played + 1, streak: 0 }
+        : state.stats
       return {
         ...state,
         saveStatsThisQ: effective,
@@ -581,7 +615,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           persistBtns = oneBtn(correct, 'correct')
         } else {
           const tIdx = typeof u.timesLen === 'number' ? u.timesLen : null
-          const cut = tIdx != null && tIdx < times.length ? [...times.slice(0, tIdx), ...times.slice(tIdx + 1)] : times
+          const cut =
+            tIdx != null && tIdx < times.length
+              ? [...times.slice(0, tIdx), ...times.slice(tIdx + 1)]
+              : times
           stats = { ...state.stats, good: Math.max(0, state.stats.good - 1), times: cut }
           persistBtns = oneBtn(correct, 'override-wrong')
         }
@@ -605,22 +642,48 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         if (u.wasWrong) {
           if (state.wrongTime != null && tracking) times.push(state.wrongTime)
           const streak = u.streak + 1
-          stats = { ...state.stats, played: u.played + 1, good: u.good + 1, streak, best: Math.max(u.best, streak), times }
+          stats = {
+            ...state.stats,
+            played: u.played + 1,
+            good: u.good + 1,
+            streak,
+            best: Math.max(u.best, streak),
+            times,
+          }
         } else {
           stats = { ...state.stats, played: u.played + 1, good: u.good, streak: 0, times }
         }
-        let s: GameState = { ...s0, stats, prevStatsSnapshot: null, wrongTime: null, canOverrideCorrect: false, countedWrong: true }
+        let s: GameState = {
+          ...s0,
+          stats,
+          prevStatsSnapshot: null,
+          wrongTime: null,
+          canOverrideCorrect: false,
+          countedWrong: true,
+        }
         if (u.wasWrong && s.stack.length) {
           const last = s.stack[s.stack.length - 1]
           const wd = correctIndexOf(last, useJulian)
-          s = { ...s, stack: [...s.stack.slice(0, -1), { ...last, btns: oneBtn(wd, 'correct'), overrideUsed: true }] }
+          s = {
+            ...s,
+            stack: [
+              ...s.stack.slice(0, -1),
+              { ...last, btns: oneBtn(wd, 'correct'), overrideUsed: true },
+            ],
+          }
         }
         // `noAdvance` (AoX): reversing the completing solve fails the run (Allow Mistakes off) —
         // stay on the question instead of advancing, so the component can lock it as failed.
         if (!timingOff && !noAdvance) {
           s = advance(s, { nextDate, useJulian, saved: true })
           if (s.stack.length)
-            s = { ...s, stack: [...s.stack.slice(0, -1), { ...s.stack[s.stack.length - 1], overrideUsed: true }] }
+            s = {
+              ...s,
+              stack: [
+                ...s.stack.slice(0, -1),
+                { ...s.stack[s.stack.length - 1], overrideUsed: true },
+              ],
+            }
         } else {
           s = { ...s, locked: false, revealed: false, calcPenaltyActive: false, calcOpen: false }
         }
@@ -648,7 +711,13 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         s = { ...s, stats: { ...s.stats, streak: curStreak, best: bestStreak } }
         s = advance(s, { nextDate, useJulian, finalBtns: oneBtn(correct, 'correct'), saved: true })
         if (s.stack.length)
-          s = { ...s, stack: [...s.stack.slice(0, -1), { ...s.stack[s.stack.length - 1], overrideUsed: true }] }
+          s = {
+            ...s,
+            stack: [
+              ...s.stack.slice(0, -1),
+              { ...s.stack[s.stack.length - 1], overrideUsed: true },
+            ],
+          }
         return { ...s, pendingWrongOverride: null }
       }
 
@@ -663,7 +732,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           ? { ...state.stats, played: snap.played + 1, good: snap.good + 1, times }
           : { ...state.stats, good: state.stats.good + 1, times }
         const wd = correctIndexOf(last, useJulian)
-        const newStack = [...state.stack.slice(0, -1), { ...last, btns: oneBtn(wd, 'correct'), overrideUsed: true, hasCredit: true }]
+        const newStack = [
+          ...state.stack.slice(0, -1),
+          { ...last, btns: oneBtn(wd, 'correct'), overrideUsed: true, hasCredit: true },
+        ]
         const { curStreak, bestStreak } = streaksFromStacks(newStack, state.forwardStack)
         let s: GameState = {
           ...s0,
@@ -675,7 +747,13 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         if (!timingOff) {
           s = advance(s, { nextDate, useJulian, saved: true })
           if (s.stack.length)
-            s = { ...s, stack: [...s.stack.slice(0, -1), { ...s.stack[s.stack.length - 1], overrideUsed: true }] }
+            s = {
+              ...s,
+              stack: [
+                ...s.stack.slice(0, -1),
+                { ...s.stack[s.stack.length - 1], overrideUsed: true },
+              ],
+            }
         } else {
           // Live Q untouched — re-arm Override for its own future state (mirrors App).
           s = { ...s, overrideUsedThisQ: false }
@@ -707,9 +785,17 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           newLast = { ...target, btns: oneBtn(wd, 'correct'), overrideUsed: true, hasCredit: true }
         } else {
           const tIdx = typeof u.timesLen === 'number' ? u.timesLen : null
-          const cut = tIdx != null && tIdx < times.length ? [...times.slice(0, tIdx), ...times.slice(tIdx + 1)] : times
+          const cut =
+            tIdx != null && tIdx < times.length
+              ? [...times.slice(0, tIdx), ...times.slice(tIdx + 1)]
+              : times
           stats = { ...state.stats, good: Math.max(0, state.stats.good - 1), times: cut }
-          newLast = { ...target, btns: oneBtn(wd, 'override-wrong'), overrideUsed: true, hasCredit: false }
+          newLast = {
+            ...target,
+            btns: oneBtn(wd, 'override-wrong'),
+            overrideUsed: true,
+            hasCredit: false,
+          }
         }
         const newStack = [...state.stack.slice(0, -1), newLast]
         const { curStreak, bestStreak } = streaksFromStacks(newStack, state.forwardStack)
@@ -727,8 +813,12 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case 'BACK': {
       const prev = state.stack[state.stack.length - 1]
       if (!prev) return state
-      const fwdHC = state.backDepth === 0 ? computeHasCredit(state.persistBtns) : state.browseHasCredit
-      const fwdCapsule: Capsule = { snapshot: state.prevStatsSnapshot ? { ...state.prevStatsSnapshot } : null, wrongTime: state.wrongTime }
+      const fwdHC =
+        state.backDepth === 0 ? computeHasCredit(state.persistBtns) : state.browseHasCredit
+      const fwdCapsule: Capsule = {
+        snapshot: state.prevStatsSnapshot ? { ...state.prevStatsSnapshot } : null,
+        wrongTime: state.wrongTime,
+      }
       const fwdEntry: StackEntry =
         state.backDepth === 0
           ? {
@@ -744,12 +834,20 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
                 canOverrideCorrect: state.canOverrideCorrect,
                 pendingWrongOverride: state.pendingWrongOverride,
                 calcPenaltyActive: state.calcPenaltyActive,
-                preCalcPenaltySnapshot: state.preCalcPenaltySnapshot ? { ...state.preCalcPenaltySnapshot } : null,
+                preCalcPenaltySnapshot: state.preCalcPenaltySnapshot
+                  ? { ...state.preCalcPenaltySnapshot }
+                  : null,
                 saveStatsFrozen: state.saveStatsThisQ,
               },
               hasCredit: fwdHC,
             }
-          : { ...state.date, btns: { ...state.persistBtns }, overrideUsed: state.overrideUsedThisQ, capsule: fwdCapsule, hasCredit: fwdHC }
+          : {
+              ...state.date,
+              btns: { ...state.persistBtns },
+              overrideUsed: state.overrideUsedThisQ,
+              capsule: fwdCapsule,
+              hasCredit: fwdHC,
+            }
       const wasAnswered = prev.btns && Object.keys(prev.btns).length > 0
       const wasRevealed = !!(prev.btns && Object.values(prev.btns).includes('correct'))
       const cap: Partial<Capsule> = prev.capsule || {}
@@ -759,7 +857,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         forwardStack: [...state.forwardStack, fwdEntry],
         stack: state.stack.slice(0, -1),
         date: prev,
-        persistBtns: wasAnswered ? prev.btns ?? {} : {},
+        persistBtns: wasAnswered ? (prev.btns ?? {}) : {},
         locked: true,
         revealed: wasRevealed,
         countedWrong: false,
@@ -783,9 +881,18 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const { useJulian } = action
       const fwd = state.forwardStack[state.forwardStack.length - 1]
       if (!fwd) return state
-      const capsule: Capsule = { snapshot: state.prevStatsSnapshot ? { ...state.prevStatsSnapshot } : null, wrongTime: state.wrongTime }
+      const capsule: Capsule = {
+        snapshot: state.prevStatsSnapshot ? { ...state.prevStatsSnapshot } : null,
+        wrongTime: state.wrongTime,
+      }
       const pushed = entryWithGreen(
-        { ...state.date, btns: { ...state.persistBtns }, overrideUsed: state.overrideUsedThisQ, capsule, hasCredit: state.browseHasCredit },
+        {
+          ...state.date,
+          btns: { ...state.persistBtns },
+          overrideUsed: state.overrideUsedThisQ,
+          capsule,
+          hasCredit: state.browseHasCredit,
+        },
         useJulian,
       )
       const base: GameState = {
@@ -821,7 +928,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const cap: Partial<Capsule> = fwd.capsule || {}
       return {
         ...base,
-        persistBtns: fwdAnswered ? fwd.btns ?? {} : {},
+        persistBtns: fwdAnswered ? (fwd.btns ?? {}) : {},
         locked: true,
         revealed: fwdRevealed,
         countedWrong: false,

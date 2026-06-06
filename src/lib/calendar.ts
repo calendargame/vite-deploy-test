@@ -47,17 +47,20 @@ export function jdnGregorian(y: number, m: number, d: number): number {
     32045
   )
 }
-export const wday = (y: number, m: number, d: number): number => (((jdnGregorian(toAstro(y), m, d) + 1) % 7) + 7) % 7
+export const wday = (y: number, m: number, d: number): number =>
+  (((jdnGregorian(toAstro(y), m, d) + 1) % 7) + 7) % 7
 export function jdnJulian(y: number, m: number, d: number): number {
   const a = Math.floor((14 - m) / 12),
     y2 = y + 4800 - a,
     m2 = m - 3 + 12 * a
   return d + Math.floor((153 * m2 + 2) / 5) + 365 * y2 + Math.floor(y2 / 4) - 32083
 }
-export const wdayJulian = (y: number, m: number, d: number): number => (((jdnJulian(toAstro(y), m, d) + 1) % 7) + 7) % 7
+export const wdayJulian = (y: number, m: number, d: number): number =>
+  (((jdnJulian(toAstro(y), m, d) + 1) % 7) + 7) % 7
 export const isJulianDate = (y: number, m: number, d: number): boolean =>
   y < 1582 || (y === 1582 && (m < 10 || (m === 10 && d <= 4)))
-export const isGapDate = (y: number, m: number, d: number): boolean => y === 1582 && m === 10 && d >= 5 && d <= 14
+export const isGapDate = (y: number, m: number, d: number): boolean =>
+  y === 1582 && m === 10 && d >= 5 && d <= 14
 // Returns true if [lo,hi] contains at least one leap year, evaluated under the active calendar
 // (Julian rule for years <1582 when useJulian is on; Gregorian rule otherwise). Used to lock the
 // Leap Year Chance buttons when no leap year is reachable — without this, setting 50/75/100% would

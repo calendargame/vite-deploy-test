@@ -37,7 +37,12 @@ export const fmtYear = (y: number): string => (y > 0 ? String(y) : `${Math.abs(y
 //   numeric-dmy  → 27.4.1828
 //   numeric-ymd  → 1828-4-27
 // Convention: numeric MDY uses /, DMY uses ., YMD uses -. Year always full, no leading zeros, no ordinals.
-export const fmt = (y: number, m: number, d: number, formatId: FormatId = 'written-mdy'): string => {
+export const fmt = (
+  y: number,
+  m: number,
+  d: number,
+  formatId: FormatId = 'written-mdy',
+): string => {
   const yr = fmtYear(y)
   switch (formatId) {
     case 'written-dmy':
@@ -58,7 +63,13 @@ export const fmt = (y: number, m: number, d: number, formatId: FormatId = 'writt
 // piece while honoring the active formatId for the rest. The placeholder
 // is uniform across all pieces and formats — the sub-mode label already
 // tells the user what's missing, so a short uniform marker reads fastest.
-export const fmtPartial = (y: number, m: number, d: number, formatId: FormatId, missing: DatePart): string => {
+export const fmtPartial = (
+  y: number,
+  m: number,
+  d: number,
+  formatId: FormatId,
+  missing: DatePart,
+): string => {
   const PH = '__'
   const dPart = missing === 'day' ? PH : String(d)
   const mNamePart = missing === 'month' ? PH : MONTH[m - 1]

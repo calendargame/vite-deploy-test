@@ -6,7 +6,8 @@
 // Pure — no app state, no React. `times` is an array of seconds; all three
 // return null on an empty array (rendered as "—" by the formatters).
 // ─────────────────────────────────────────────────────────────────────────
-export const calcAvg = (t: number[]): number | null => (t.length ? t.reduce((a, b) => a + b, 0) / t.length : null)
+export const calcAvg = (t: number[]): number | null =>
+  t.length ? t.reduce((a, b) => a + b, 0) / t.length : null
 export const calcLast = (t: number[]): number | null => (t.length ? t[t.length - 1] : null)
 export const calcMed = (t: number[]): number | null => {
   if (!t.length) return null
