@@ -177,7 +177,14 @@ button:focus,select:focus{outline:none}
    weak devices. transform-origin:left makes it empty from the right (matching the old
    width animation); will-change promotes the layer up front to avoid a start-of-animation hitch. */
 .bar>span{display:block;height:100%;transform-origin:left;will-change:transform;background:linear-gradient(90deg,#a855f7,#7c3aed)}
-.expander{max-height:0;transition:max-height .28s ease-in-out;overflow:hidden;will-change:max-height}
+/* Reduced-motion groundwork (C2): decorative-motion durations multiply by --motion-scale, which
+   drops to 0 under the OS "Reduce Motion" setting, making them instant. Functional motion — the
+   .bar countdown (transform:scaleX, set inline in JS) and the color flashes (.flash-*, which are
+   state feedback, not movement) — is deliberately NOT scaled, so it's unchanged. Future decorative
+   animations should multiply their duration by var(--motion-scale) to respect the setting for free. */
+:root{--motion-scale:1}
+@media (prefers-reduced-motion: reduce){:root{--motion-scale:0}}
+.expander{max-height:0;transition:max-height calc(.28s * var(--motion-scale)) ease-in-out;overflow:hidden;will-change:max-height}
 [data-theme="parchment"] .text-purple-50,[data-theme="light"] .text-purple-50{color:var(--body-color)!important}
 [data-theme="parchment"] .text-purple-100,[data-theme="light"] .text-purple-100{color:var(--sec-color)!important}
 [data-theme="parchment"] .text-purple-100\/80,[data-theme="light"] .text-purple-100\/80,[data-theme="parchment"] .text-purple-100\/90,[data-theme="light"] .text-purple-100\/90,[data-theme="parchment"] .text-purple-100\/85,[data-theme="light"] .text-purple-100\/85{color:var(--sec-color)!important}
