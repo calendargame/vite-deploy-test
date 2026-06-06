@@ -27,12 +27,15 @@ const isLiveRepo = (repository) => (repository || '').endsWith('/calendargame.gi
 // The site is DNS-only (not proxied through Cloudflare), so Cloudflare can't auto-collect — we inject
 // the manual beacon into the built index.html. The token is PUBLIC (it ships in the page HTML for
 // every visitor), so it's fine in source. Remove this plugin + its conditional below to drop analytics.
+// ⚠ The token below must be the value from Cloudflare's "Enable with JS Snippet installation" snippet —
+// NOT the dashboard site ID (the /web-analytics/edit/<id> value). Using the site ID was the original B1
+// bug: beacons sent fine but Cloudflare silently dropped them all (zero data). Fixed 2026-06-06.
 const cfWebAnalytics = () => ({
   name: 'cf-web-analytics-beacon',
   transformIndexHtml: (html) =>
     html.replace(
       '</head>',
-      `  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "2306b4c5098043da84f6360b6e4b07c2"}'></script>\n</head>`,
+      `  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f9c4758b29d04e02ad0e757ae824a4b5"}'></script>\n</head>`,
     ),
 })
 
