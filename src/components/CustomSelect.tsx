@@ -179,14 +179,12 @@ export default function CustomSelect({
       }
       return
     }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-      e.preventDefault()
-      handleToggle()
-    } else if (e.key === ' ') {
-      // Space does NOTHING on the trigger (owner's call 2026-06-06): the Tab shortcut leaves the trigger
-      // focused, where Space would otherwise toggle the dropdown — a confusing "invisible" activation with
-      // no visible focus ring. preventDefault also swallows the browser's default button click. Enter and
-      // ↑/↓ still open it.
+    // Closed: NO key opens the dropdown from the trigger — only the global Tab shortcut, or a mouse
+    // click, opens it (owner's call 2026-06-06). The Tab shortcut leaves the trigger focused, and the
+    // owner doesn't want a focused-but-invisible trigger to spring open on Enter/Space/arrows. Swallow
+    // Enter + Space so the browser's default button activation can't open it either; arrows fall through
+    // to normal page scrolling. (Once open, ↑/↓ navigate, Enter selects, Esc/Tab close — branch above.)
+    if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
     }
   }

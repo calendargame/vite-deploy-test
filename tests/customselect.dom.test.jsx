@@ -5,8 +5,9 @@
 // The grey active box (bg-black/10) is a pointer/keyboard cursor, NOT an open-state
 // indicator: it must NOT appear just from opening (so it never shows on mobile, where there's
 // no hover/arrow input), it appears on a real MOUSE hover or an arrow key, and the first arrow
-// steps ONE option from the selected one (Down → below the ✓, Up → above). Space is inert on the
-// trigger (Enter + ↑/↓ open it). The check mark (✓) marks the selection, independent of the box.
+// steps ONE option from the selected one (Down → below the ✓, Up → above). The trigger opens ONLY
+// via the global Tab shortcut or a mouse click — Enter/Space/arrows do NOT open it from the trigger.
+// The check mark (✓) marks the selection, independent of the box.
 // (Behavior updated 2026-06-06; the box-on-open suppression was 2026-06-01.)
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
@@ -76,17 +77,19 @@ describe('CustomSelect — active-cursor highlight', () => {
     expect(boxed[0].textContent).toContain('Gamma')
   })
 
-  it('Space is inert on the trigger (does not open); Enter still opens', () => {
+  it('the trigger does NOT open on Enter / Space / arrows (only Tab or a mouse click opens it)', () => {
     const root = document.createElement('div')
     root.id = 'root'
     document.body.appendChild(root)
     render(<CustomSelect value="b" onChange={() => {}} options={OPTIONS} ariaLabel="Test" />)
     const trigger = screen.getByRole('button', { name: 'Test' })
-    fireEvent.keyDown(trigger, { key: ' ' })
-    expect(screen.queryAllByRole('option').length).toBe(0) // Space did NOT open it
-    expect(trigger.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.keyDown(trigger, { key: 'Enter' })
-    expect(screen.queryAllByRole('option').length).toBe(3) // Enter still opens
+    for (const key of ['Enter', ' ', 'ArrowDown', 'ArrowUp']) {
+      fireEvent.keyDown(trigger, { key })
+      expect(screen.queryAllByRole('option').length).toBe(0) // stays closed — no keyboard open from the trigger
+      expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    }
+    fireEvent.click(trigger) // a mouse click still opens it
+    expect(screen.queryAllByRole('option').length).toBe(3)
   })
 
   it('a MOUSE hover highlights an option, a TOUCH pointer does not', () => {
