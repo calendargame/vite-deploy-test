@@ -119,8 +119,8 @@ export default function CustomSelect({
       // Do NOT pre-highlight the selected option on open. The grey "active" box is a
       // pointer/keyboard cursor, not an open-state indicator (the ✓ already marks the
       // selection). It appears only once the user hovers with a MOUSE or presses an arrow —
-      // touch sends neither, so the box never shows on mobile. First ↑/↓ reveals it on the
-      // selected option (see handleTriggerKeyDown).
+      // touch sends neither, so the box never shows on mobile. First ↑/↓ reveals it one step from the
+      // selected option — Down just below the ✓, Up just above (see handleTriggerKeyDown).
       setActiveIdx(-1)
     }
     setOpen((v) => !v)
@@ -144,23 +144,33 @@ export default function CustomSelect({
         closeAndFocus()
       } else if (e.key === 'ArrowDown') {
         e.preventDefault()
-        // First arrow (from the no-cursor -1 state) reveals the box ON the selected option;
-        // subsequent arrows move it. So the cursor first appears where the ✓ is.
+        // First arrow (from the no-cursor -1 state) steps ONE option from the selected one — Down lands
+        // just below the ✓, Up just above (owner's call 2026-06-06; previously the first arrow landed on
+        // the selected option itself). Clamped at the ends; subsequent arrows keep moving.
         setActiveIdx((i) =>
-          i < 0 ? (selectedIdx >= 0 ? selectedIdx : 0) : Math.min(options.length - 1, i + 1),
+          i < 0
+            ? selectedIdx >= 0
+              ? Math.min(options.length - 1, selectedIdx + 1)
+              : 0
+            : Math.min(options.length - 1, i + 1),
         )
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setActiveIdx((i) => (i < 0 ? (selectedIdx >= 0 ? selectedIdx : 0) : Math.max(0, i - 1)))
+        setActiveIdx((i) =>
+          i < 0 ? (selectedIdx >= 0 ? Math.max(0, selectedIdx - 1) : 0) : Math.max(0, i - 1),
+        )
       } else if (e.key === 'Home') {
         e.preventDefault()
         setActiveIdx(0)
       } else if (e.key === 'End') {
         e.preventDefault()
         setActiveIdx(options.length - 1)
-      } else if (e.key === 'Enter' || e.key === ' ') {
+      } else if (e.key === 'Enter') {
         e.preventDefault()
         selectAt(activeIdx >= 0 ? activeIdx : selectedIdx)
+      } else if (e.key === ' ') {
+        // Space is inert on the trigger (owner's call 2026-06-06) — see the closed-state note below.
+        e.preventDefault()
       } else if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         e.stopPropagation()
@@ -169,9 +179,15 @@ export default function CustomSelect({
       }
       return
     }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
       e.preventDefault()
       handleToggle()
+    } else if (e.key === ' ') {
+      // Space does NOTHING on the trigger (owner's call 2026-06-06): the Tab shortcut leaves the trigger
+      // focused, where Space would otherwise toggle the dropdown — a confusing "invisible" activation with
+      // no visible focus ring. preventDefault also swallows the browser's default button click. Enter and
+      // ↑/↓ still open it.
+      e.preventDefault()
     }
   }
   useEffect(() => {

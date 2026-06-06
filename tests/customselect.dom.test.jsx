@@ -5,8 +5,9 @@
 // The grey active box (bg-black/10) is a pointer/keyboard cursor, NOT an open-state
 // indicator: it must NOT appear just from opening (so it never shows on mobile, where there's
 // no hover/arrow input), it appears on a real MOUSE hover or an arrow key, and the first arrow
-// reveals it on the currently-selected option. The check mark (✓) marks the selection and is
-// independent of the box. (Deliberate behavior change, 2026-06-01.)
+// steps ONE option from the selected one (Down → below the ✓, Up → above). Space is inert on the
+// trigger (Enter + ↑/↓ open it). The check mark (✓) marks the selection, independent of the box.
+// (Behavior updated 2026-06-06; the box-on-open suppression was 2026-06-01.)
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import CustomSelect from '../src/components/CustomSelect.jsx'
@@ -47,30 +48,45 @@ describe('CustomSelect — active-cursor highlight', () => {
     expect(selected.textContent).toContain('Beta')
   })
 
-  it('the first ArrowDown reveals the box ON the selected option', () => {
-    const trigger = openWith('b') // 'b' = Beta = index 1
+  it('the first ArrowDown highlights the option BELOW the selected one', () => {
+    const trigger = openWith('b') // Beta (index 1) → first Down lands on Gamma (index 2)
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
     const boxed = options().filter(hasBox)
     expect(boxed.length).toBe(1)
-    expect(boxed[0].getAttribute('aria-selected')).toBe('true')
-    expect(boxed[0].textContent).toContain('Beta')
+    expect(boxed[0].textContent).toContain('Gamma')
   })
 
-  it('the first ArrowUp also reveals the box on the selected option', () => {
-    const trigger = openWith('b')
+  it('the first ArrowUp highlights the option ABOVE the selected one', () => {
+    const trigger = openWith('b') // Beta (1) → first Up lands on Alpha (0)
     fireEvent.keyDown(trigger, { key: 'ArrowUp' })
     const boxed = options().filter(hasBox)
     expect(boxed.length).toBe(1)
-    expect(boxed[0].textContent).toContain('Beta')
+    expect(boxed[0].textContent).toContain('Alpha')
   })
 
-  it('a second ArrowDown moves the box off the selected option', () => {
-    const trigger = openWith('b')
-    fireEvent.keyDown(trigger, { key: 'ArrowDown' }) // → Beta (selected)
-    fireEvent.keyDown(trigger, { key: 'ArrowDown' }) // → Gamma
+  it('ArrowDown steps down one option at a time and clamps at the last', () => {
+    const trigger = openWith('a') // Alpha (0)
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' }) // → Beta (1)
+    expect(options().filter(hasBox)[0].textContent).toContain('Beta')
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' }) // → Gamma (2)
+    expect(options().filter(hasBox)[0].textContent).toContain('Gamma')
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' }) // clamps at Gamma (last)
     const boxed = options().filter(hasBox)
     expect(boxed.length).toBe(1)
     expect(boxed[0].textContent).toContain('Gamma')
+  })
+
+  it('Space is inert on the trigger (does not open); Enter still opens', () => {
+    const root = document.createElement('div')
+    root.id = 'root'
+    document.body.appendChild(root)
+    render(<CustomSelect value="b" onChange={() => {}} options={OPTIONS} ariaLabel="Test" />)
+    const trigger = screen.getByRole('button', { name: 'Test' })
+    fireEvent.keyDown(trigger, { key: ' ' })
+    expect(screen.queryAllByRole('option').length).toBe(0) // Space did NOT open it
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    expect(screen.queryAllByRole('option').length).toBe(3) // Enter still opens
   })
 
   it('a MOUSE hover highlights an option, a TOUCH pointer does not', () => {
