@@ -377,7 +377,15 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     // Advance to a fresh question (the "New" button / doNew→pushAndNext).
     case 'NEW': {
       const { nextDate, useJulian, saveStats } = action
-      return advance(state, { nextDate, useJulian, saved: effectiveSaveStats(state, saveStats) })
+      // If browsing back, return to the live edge FIRST (replay Forward), then advance — so New
+      // advances the LIVE question, not the browsed one. Advancing from a browsed entry would
+      // DUPLICATE it into history (advance resets the copy's overrideUsed, so it can be credited
+      // AGAIN via Path 5 → good>played) and discard the live question. backDepth and forwardStack
+      // length stay in lockstep while browsing, so this terminates at the live edge. Fix 2026-06-06.
+      let s = state
+      while (s.backDepth > 0 && s.forwardStack.length > 0)
+        s = gameReducer(s, { type: 'FORWARD', useJulian })
+      return advance(s, { nextDate, useJulian, saved: effectiveSaveStats(s, saveStats) })
     }
 
     // ── ANSWER ───────────────────────────────────────────────────────────────
@@ -458,7 +466,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const next: GameState = { ...state, saveStatsThisQ: effective }
       if (!state.countedWrong) {
         next.wrongTime = elapsed
-        next.prevStatsSnapshot = null
+        // Store a wasWrong snapshot (like a wrong ANSWER) so a revealed question's history entry is
+        // back-browse-overridable later (Path 1): Reveal counts as a miss, so it must be flippable to
+        // correct after New + Back, same as a wrong answer. (Was null → Override locked.) Fix 2026-06-06.
+        next.prevStatsSnapshot = snapshot(state.stats, true)
         if (effective) next.stats = { ...state.stats, played: state.stats.played + 1, streak: 0 }
       }
       next.countedWrong = true
@@ -496,7 +507,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const firstPenalty = !state.countedWrong && !state.revealed
       if (firstPenalty) {
         next.wrongTime = elapsed
-        next.prevStatsSnapshot = null
+        // wasWrong snapshot (like a wrong ANSWER) so a show-coded entry is back-browse-overridable
+        // later (Path 1). preCalcPenaltySnapshot below still feeds Path 4; the credit-at-most-once gate
+        // (Path 4 skips a target already credited via Path 1) keeps the two from double-crediting.
+        next.prevStatsSnapshot = snapshot(state.stats, true)
         next.preCalcPenaltySnapshot = {
           played: state.stats.played,
           good: state.stats.good,
@@ -742,7 +756,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       if (state.pendingWrongOverride != null) {
         const { wrongTime, snapshot: snap } = state.pendingWrongOverride
         const last = state.stack[state.stack.length - 1]
-        if (!last) return { ...s0, pendingWrongOverride: null, preCalcPenaltySnapshot: null }
+        // Skip if the target entry is gone OR already credited via back-browse Path 1 (its
+        // overrideUsed flag): crediting it again is the Back→override→Forward→override double-credit
+        // (good>played). A question is credited AT MOST once. Fix 2026-06-06.
+        if (!last || last.overrideUsed)
+          return { ...s0, pendingWrongOverride: null, preCalcPenaltySnapshot: null }
         const times = snap ? state.stats.times.slice(0, snap.timesLen) : [...state.stats.times]
         if (wrongTime != null && tracking) times.push(wrongTime)
         const stats = snap

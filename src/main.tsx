@@ -719,7 +719,7 @@ interface DedOpts {
       // and the live toggle is what should gate the button here. Do NOT "consistency-fix" this to
       // effectiveSaveStats — saveStatsThisQ is always true here, so that would wrongly show Override
       // while Save Stats is off.
-      const overrideAvail=saveStats&&!state.overrideUsedThisQ&&(state.countedWrong||state.canOverrideCorrect||state.pendingWrongOverride!=null||eng.retroOverrideEligible);
+      const overrideAvail=saveStats&&!state.overrideUsedThisQ&&(state.countedWrong||state.canOverrideCorrect||(state.pendingWrongOverride!=null&&!last?.overrideUsed)||eng.retroOverrideEligible);
       const codesDisabled=runPhase==="idle"||(oneByOne&&!shown&&!inBack&&!isLocked);
       const optionsDisabled=isLocked||state.calcOpen||(oneByOne&&!shown&&!inBack)||runPhase==="idle"||inBack;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";

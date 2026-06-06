@@ -494,3 +494,139 @@ describe('Classic — Show Codes while browsing back is read-only (fix 2026-06-0
     expect(statValue('Score')).toBe('0/1') // the legit flip — NOT the pre-fix 2/1 over-credit
   })
 })
+
+// ── Override + back-browse: credit a question AT MOST ONCE (deliberate fix, 2026-06-06) ─────────
+// Owner-reported scenarios. The bug: crediting a back-browsed wrong entry (Path 1) does NOT
+// invalidate the live question's pendingWrongOverride (which targets the SAME entry), so Forward +
+// Override credits it again (Path 4) → impossible 2/1. New (not Forward) happened to clear it, which
+// is why the New variants were already correct. Plus an asymmetry: a wrong ANSWER stores a stats
+// snapshot on its history entry (so it can be back-browse-overridden), but Reveal / Show Codes set
+// that snapshot to null — so a revealed/show-coded question can't be overridden after New + Back,
+// even though it was scored and should be. These lock the correct behavior (the 2/3 + Reveal/Show
+// Codes cases fail RED against the pre-fix engine).
+describe('Classic — Override credits a question at most once (fix 2026-06-06)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  // Scenario 1 (already correct): first-try correct → back → override flips it → forward → locked.
+  it('S1: correct → back → override (flip to wrong) → forward → Override locked', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(correctName(q1))) // 1/1 → advance
+    fireEvent.click(ctrl('<')) // back to Q1
+    fireEvent.click(ctrl('Override')) // Path 1: flip correct→wrong → 0/1
+    expect(statValue('Score')).toBe('0/1')
+    fireEvent.click(ctrl('>')) // forward to live
+    expect(isDisabled(ctrl('Override'))).toBe(true)
+    expect(statValue('Score')).toBe('0/1')
+  })
+
+  // Scenario 2 (BUG): wrong→right → back → override (credit) → forward → override must be LOCKED.
+  it('S2: wrong→right → back → override → forward → Override locked, no double-credit (not 2/1)', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1))) // 0/1
+    fireEvent.click(dayBtn(correctName(q1))) // wrong→right: advance, pendingWrongOverride armed
+    expect(statValue('Score')).toBe('0/1')
+    fireEvent.click(ctrl('<')) // back to Q1
+    fireEvent.click(ctrl('Override')) // Path 1: credit Q1 → 1/1
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('>')) // forward to live
+    expect(isDisabled(ctrl('Override'))).toBe(true) // Q1 already credited — must not credit again
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // Scenario 3 (BUG): wrong → New → back → override (credit) → forward → override must be LOCKED.
+  it('S3: wrong → New → back → override → forward → Override locked, no double-credit (not 2/1)', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1))) // 0/1
+    fireEvent.click(ctrl('New')) // advance, pendingWrongOverride armed
+    fireEvent.click(ctrl('<')) // back to Q1
+    fireEvent.click(ctrl('Override')) // Path 1: credit Q1 → 1/1
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('>')) // forward to live
+    expect(isDisabled(ctrl('Override'))).toBe(true)
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // Scenario 4 (already correct): wrong→right → back → override → New → locked.
+  it('S4: wrong→right → back → override → New → Override locked', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1)))
+    fireEvent.click(dayBtn(correctName(q1))) // advance, 0/1
+    fireEvent.click(ctrl('<'))
+    fireEvent.click(ctrl('Override')) // Path 1 credit → 1/1
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('New'))
+    expect(isDisabled(ctrl('Override'))).toBe(true)
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // Scenario 5 (already correct): wrong → New → back → override → New → locked.
+  it('S5: wrong → New → back → override → New → Override locked', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1)))
+    fireEvent.click(ctrl('New'))
+    fireEvent.click(ctrl('<'))
+    fireEvent.click(ctrl('Override')) // Path 1 credit → 1/1
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('New'))
+    expect(isDisabled(ctrl('Override'))).toBe(true)
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // Owner's extra find (BUG): a revealed question must be back-browse-overridable after New.
+  it('Reveal → New → back → Override available and credits (0/1 → 1/1)', () => {
+    mountApp()
+    pressNewAndRead()
+    fireEvent.click(ctrl('Reveal')) // 0/1, scored wrong
+    expect(statValue('Score')).toBe('0/1')
+    fireEvent.click(ctrl('New')) // advance, Q1 pushed
+    fireEvent.click(ctrl('<')) // back to Q1
+    expect(isDisabled(ctrl('Override'))).toBe(false) // scored → must be overridable
+    fireEvent.click(ctrl('Override')) // credit Q1 → 1/1
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // Same asymmetry via Show Codes.
+  it('Show Codes → New → back → Override available and credits (0/1 → 1/1)', () => {
+    mountApp()
+    pressNewAndRead()
+    fireEvent.click(ctrl('Show Codes')) // burns + scores the live question (0/1)
+    expect(statValue('Score')).toBe('0/1')
+    fireEvent.click(ctrl('New')) // advance, Q1 pushed
+    fireEvent.click(ctrl('<')) // back to Q1
+    expect(isDisabled(ctrl('Override'))).toBe(false) // scored → must be overridable
+    fireEvent.click(ctrl('Override')) // credit Q1 → 1/1
+    expect(statValue('Score')).toBe('1/1')
+  })
+
+  // New while browsing a credited entry must not duplicate it (which would let it be re-credited).
+  it('New while browsing a credited entry → no duplicate, no re-credit (stays 1/1, Override locked)', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1))) // 0/1
+    fireEvent.click(ctrl('New')) // advance, Q1 pushed
+    fireEvent.click(ctrl('<')) // back to Q1
+    fireEvent.click(ctrl('Override')) // Path 1: credit Q1 → 1/1 (still browsing the credited Q1)
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('New')) // New WHILE browsing — must return to live + advance, not duplicate Q1
+    expect(statValue('Score')).toBe('1/1')
+    fireEvent.click(ctrl('<')) // back to the (single, credited) Q1
+    expect(isDisabled(ctrl('Override'))).toBe(true) // already credited → cannot re-credit
+    expect(statValue('Score')).toBe('1/1')
+  })
+})

@@ -90,7 +90,9 @@ export function useGameEngine({
     effectiveSaveStats(state, saveStats) &&
     (state.countedWrong ||
       state.canOverrideCorrect ||
-      state.pendingWrongOverride != null ||
+      // pendingWrongOverride is void once its target entry was credited via back-browse Path 1
+      // (overrideUsed) — else Forward+Override double-credits it (good>played). Fix 2026-06-06.
+      (state.pendingWrongOverride != null && !last?.overrideUsed) ||
       retroOverrideEligible) &&
     !state.overrideUsedThisQ
 
