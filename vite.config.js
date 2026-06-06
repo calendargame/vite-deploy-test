@@ -18,6 +18,24 @@ const pagesBase = (repository) => {
   return repo && repo !== 'calendargame.github.io' ? `/${repo}/` : '/'
 }
 
+// True only for the live production repo's CI build. Used to inject the Cloudflare Web Analytics
+// beacon on PRODUCTION ONLY (calendargame.app) — not the staging repo, not local/dev builds — so our
+// own testing never pollutes the real visitor numbers.
+const isLiveRepo = (repository) => (repository || '').endsWith('/calendargame.github.io')
+
+// Cloudflare Web Analytics: privacy-first, cookieless page analytics (no consent banner needed).
+// The site is DNS-only (not proxied through Cloudflare), so Cloudflare can't auto-collect — we inject
+// the manual beacon into the built index.html. The token is PUBLIC (it ships in the page HTML for
+// every visitor), so it's fine in source. Remove this plugin + its conditional below to drop analytics.
+const cfWebAnalytics = () => ({
+  name: 'cf-web-analytics-beacon',
+  transformIndexHtml: (html) =>
+    html.replace(
+      '</head>',
+      `  <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "2306b4c5098043da84f6360b6e4b07c2"}'></script>\n</head>`,
+    ),
+})
+
 export default defineConfig(({ command, mode }) => ({
   // Dev/preview serve from '/'. A production `vite build` derives its base from the repo it builds
   // in (see pagesBase above): '/' for the live org page, '/<repo>/' for the staging project repo.
@@ -66,6 +84,9 @@ export default defineConfig(({ command, mode }) => ({
       // build via `vite preview`.
       devOptions: { enabled: false },
     }),
+    // Cloudflare Web Analytics beacon — PRODUCTION build only (see cfWebAnalytics + isLiveRepo above),
+    // so the staging repo and local/dev builds never report and the real numbers stay clean.
+    ...(command === 'build' && isLiveRepo(process.env.GITHUB_REPOSITORY) ? [cfWebAnalytics()] : []),
     // Bundle analysis (Stage E2): `npm run analyze` (= `vite build --mode analyze`) emits an
     // interactive treemap to dist/stats.html so we can see what's in the JS bundle and catch
     // surprise bloat as the app grows. Gated on the 'analyze' mode so it NEVER runs in a normal
