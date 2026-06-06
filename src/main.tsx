@@ -364,7 +364,7 @@ interface DedOpts {
 
 
 
-    const DEPLOY_TS=new Date('2026-06-06T18:59:31Z');
+    const DEPLOY_TS=new Date('2026-06-06T19:31:50Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
@@ -1860,7 +1860,7 @@ interface DedOpts {
       // #root, to escape this overflow scroll context for the frosted-glass blur. Do NOT
       // re-portal the whole popover: that was tried (on a wrong "the fixed bar breaks the
       // frost" theory) and reverted — the scroll container, not the bar, was the cause.
-      const settingsJsx=settingsOpen&&(<div ref={settingsPopoverRef} className="absolute left-4 right-4 top-full mt-2 z-50 rounded-2xl card py-4 space-y-4 shadow-xl flex flex-col max-h-[calc(100dvh-80px)]">
+      const settingsJsx=settingsOpen&&(<div ref={settingsPopoverRef} className="absolute left-4 right-4 top-full mt-2 z-50 rounded-2xl card py-4 space-y-4 shadow-xl flex flex-col max-h-[calc(100dvh-104px)]">
         <div ref={popoverInnerScrollRef} className={`overflow-y-auto overscroll-contain flex-1 min-h-0 space-y-4 px-4${popoverScrolledFromTop&&!popoverAtBottom?" fade-scroll-both":popoverScrolledFromTop?" fade-scroll-top":!popoverAtBottom?" fade-scroll-bottom":""}`}>
         <div className="space-y-2">
           <SectionLabel>Date Format</SectionLabel>
