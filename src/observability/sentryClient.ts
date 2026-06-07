@@ -15,12 +15,21 @@ import { init, captureException } from '@sentry/react'
 const DSN =
   'https://b86e091f9d51aefed301827b113a07ab@o4511521335148544.ingest.us.sentry.io/4511521342160896'
 
+// 'production' ONLY at the apex root. Staging is the /test_version/ subpath on the SAME
+// calendargame.app hostname (so the hostname alone can't distinguish them), and local prod-previews
+// run on localhost — both are 'staging'. The tag lets us filter real-user crashes from our own
+// testing in the dashboard. (If the staging URL ever changes, update the path check here.)
+function sentryEnvironment() {
+  const { hostname, pathname } = window.location
+  return hostname === 'calendargame.app' && !pathname.startsWith('/test_version/')
+    ? 'production'
+    : 'staging'
+}
+
 export function startSentry() {
   init({
     dsn: DSN,
-    // Apex = production; the staging subdomain (and local prod-previews) = staging, so we can filter
-    // real-user crashes from our own testing in the dashboard.
-    environment: window.location.hostname === 'calendargame.app' ? 'production' : 'staging',
+    environment: sentryEnvironment(),
     // Privacy-first (matches the cookieless analytics choice): never attach IP, cookies, or user
     // identifiers. The app collects no personal data, so reports carry only technical context.
     sendDefaultPii: false,
