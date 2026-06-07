@@ -1,6 +1,7 @@
 import './index.css' // Tailwind (v3, compiled in-build) + the app's custom CSS — replaces the old Play-CDN <script> + inline <style>.
 import * as React from 'react'
 import ErrorBoundary, { ModeErrorBoundary } from './ErrorBoundary'
+import { initObservability } from './observability/sentry'
 // The original loaded the full ReactDOM UMD global, which exposes BOTH createRoot and
 // createPortal. The modern modular build splits them: createRoot is in 'react-dom/client',
 // createPortal is in 'react-dom'. Reconstruct a ReactDOM with both so the app's
@@ -2065,6 +2066,11 @@ interface DedOpts {
     // touch needed to make App testable for the safety net.)
     const rootEl = typeof document !== "undefined" ? document.getElementById("root") : null;
     if (rootEl) ReactDOM.createRoot(rootEl).render(<ErrorBoundary><App/></ErrorBoundary>);
+
+    // Real-user error reporting (C1). PRODUCTION + STAGING only — import.meta.env.PROD is false in
+    // `vite dev`, so dev never reports. Lazy-loads the Sentry SDK as its own chunk (see
+    // src/observability/sentry.ts); the error boundaries above call captureError() on a crash.
+    if (rootEl && import.meta.env.PROD) initObservability();
 
     // Dev-only Core Web Vitals logging (Stage E0). The static import.meta.env.DEV guard
     // makes this dead code in a production build, so the call, reportWebVitals, and the

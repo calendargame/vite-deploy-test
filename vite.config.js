@@ -43,6 +43,15 @@ export default defineConfig(({ command, mode }) => ({
   // Dev/preview serve from '/'. A production `vite build` derives its base from the repo it builds
   // in (see pagesBase above): '/' for the live org page, '/<repo>/' for the staging project repo.
   base: command === 'build' ? pagesBase(process.env.GITHUB_REPOSITORY) : '/',
+  // Sentry tree-shaking flags (Current Work C1): compile OUT debug logging and all performance-
+  // tracing code paths from the lazy error-reporting chunk (we use Sentry for errors only — see
+  // src/observability/). This + the static named imports in src/observability/sentryClient.ts keep
+  // Session Replay (rrweb), Tracing, and Profiling out of the bundle. The string 'false' is inserted
+  // as the raw token `false` (Vite define = raw expression substitution).
+  define: {
+    __SENTRY_DEBUG__: 'false',
+    __SENTRY_TRACING__: 'false',
+  },
   // React Compiler — automatic memoization (Stage D2). @vitejs/plugin-react v6 is Rolldown/oxc-based
   // and dropped its old `babel` option, so the compiler runs through @rolldown/plugin-babel fed the
   // plugin's `reactCompilerPreset()`. Defaults are exactly what we want: compilationMode 'infer'

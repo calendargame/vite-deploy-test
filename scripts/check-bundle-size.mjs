@@ -14,12 +14,14 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
-// Budget for the total app JS, gzipped (KB). Baseline at set time: 119.92 KB measured here
-// (Stage E0/E2, 2026-06-05, React Compiler ON; Vite's own log says ~124 KB — different gzip
-// method). ~15 KB / ~12% headroom is deliberate: enough for normal iteration, tight enough to
-// catch a surprise dependency. Bump this consciously as the app grows — a sudden jump toward it
-// means an unexpected import; run `npm run analyze` first.
-const BUDGET_TOTAL_JS_GZIP_KB = 135
+// Budget for the total app JS (sum of dist/assets/*.js), gzipped (KB). Baselines: 119.92 KB
+// (Stage E0/E2, 2026-06-05, React Compiler ON) → bumped for Current Work C1, which added Sentry
+// real-user error reporting as a ~26 KB gzip LAZY chunk (src/observability/sentryClient.ts —
+// loaded off the critical render path, tree-shaken to errors-only: no Session Replay/Tracing). The
+// headroom is deliberate: enough for normal iteration, tight enough to catch a surprise (e.g.
+// accidentally re-adding Sentry Replay would balloon the lazy chunk and trip this). Bump consciously
+// as the app grows — a sudden jump toward it means an unexpected import; run `npm run analyze` first.
+const BUDGET_TOTAL_JS_GZIP_KB = 165
 
 const ASSETS_DIR = 'dist/assets'
 
