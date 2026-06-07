@@ -298,8 +298,23 @@ const advance = (
       snapshot: state.prevStatsSnapshot ? { ...state.prevStatsSnapshot } : null,
       wrongTime: state.wrongTime,
     }
+    // hasCredit = "this question EARNED a point", NOT merely "the grid shows green". REVEAL / Show
+    // Codes / a timeout / a reversed-to-wrong Override all leave a clean 'correct' on the grid WITHOUT
+    // crediting good, so computeHasCredit(btns) alone would mislabel a give-up or a miss as a credit —
+    // and a later Override that recomputes the streak from history would then inflate streak/best PAST
+    // good (an impossible score that slips by the good≤played check). A question earned a point ONLY
+    // if it was a clean first-try correct: NOT revealed (the answer was never shown) AND NOT
+    // countedWrong (never burned by a wrong / Reveal / Show Codes). The genuine credit advances
+    // (first-try ANSWER, Override Path 3) set neither flag, so this only ever drops a FALSE credit,
+    // never a real one. (Family of bugs found by the C2 fuzz survey, 2026-06-06.)
     const pushed = entryWithGreen(
-      { ...state.date, btns, overrideUsed: false, capsule, hasCredit: computeHasCredit(btns) },
+      {
+        ...state.date,
+        btns,
+        overrideUsed: false,
+        capsule,
+        hasCredit: computeHasCredit(btns) && !state.revealed && !state.countedWrong,
+      },
       useJulian,
     )
     // pushed is built from a non-null literal, so it's always defined — the guard just satisfies the type.
@@ -592,6 +607,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         saveStatsThisQ: effective,
         stats,
         persistBtns: mkBtnsWithCorrect(state.persistBtns, correct),
+        // The answer is shown → mark revealed (like LOCK_REVEAL), so if this question were ever
+        // advanced into history its 'correct' grid isn't mistaken for an earned credit. (C2 fuzz
+        // fix, 2026-06-06 — keeps the revealed-gate in advance() exhaustive.)
+        revealed: true,
         canOverrideCorrect: false,
         pendingWrongOverride: null,
       }
@@ -682,11 +701,21 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
             times,
           }
         } else {
-          stats = { ...state.stats, played: u.played + 1, good: u.good, streak: 0, times }
+          // Reversing a first-try-correct to a miss: good + streak revert — and `best` MUST revert to
+          // the pre-answer best (u.best) too, else the bump this answer gave `best` is stranded,
+          // leaving best>good (an impossible score; found by the C2 fuzz survey, 2026-06-06). The
+          // wasWrong branch above already derives best from u; this branch had omitted it.
+          stats = { ...state.stats, played: u.played + 1, good: u.good, streak: 0, best: u.best, times }
         }
         let s: GameState = {
           ...s0,
           stats,
+          // A !wasWrong reversal flips the correct to a MISS → mark the grid 'override-wrong' so the
+          // history entry advance() builds isn't counted as a (false) credit (which a later Path-3/5
+          // streak recompute would otherwise inflate past good). wasWrong (a credit) keeps its
+          // markings + credits via the stack mod below. Mirrors Path 1's override-wrong. (C2 fuzz
+          // fix, 2026-06-06.)
+          persistBtns: u.wasWrong ? s0.persistBtns : oneBtn(correct, 'override-wrong'),
           prevStatsSnapshot: null,
           wrongTime: null,
           canOverrideCorrect: false,
