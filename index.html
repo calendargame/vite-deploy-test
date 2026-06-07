@@ -51,6 +51,13 @@
 </head>
 <body class="text-purple-50">
   <div id="root" class="min-h-screen">Loading…</div>
+  <!-- Warm the home-screen icon into the browser cache on first load. Without this, tapping iOS's
+       "Add to Home Screen" before the icon has downloaded makes iOS fall back to a generic snapshot
+       (the icon must already be cached when that preview sheet renders). A real hidden <img> fetches
+       it eagerly — with no "preloaded-but-unused" console warning a <link rel=preload> would cause in
+       browsers that don't consume apple-touch-icon. -->
+  <img src="/apple-touch-icon.png" alt="" aria-hidden="true" fetchpriority="high"
+       style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" />
   <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
