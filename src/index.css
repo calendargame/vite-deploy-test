@@ -180,13 +180,15 @@ button:focus,select:focus{outline:none}
 /* Fluid type + spacing (C3): ONE fluid root font-size scales every rem-based size at once — Tailwind's
    text-*, p-*, gap-*, etc. are rem, and the column max-width is set in rem too — so the whole app grows
    / shrinks proportionally with the viewport. The preferred size is min(width-term, height-term): the
-   width term scales with viewport WIDTH, but min() caps it by viewport HEIGHT (1.8vh) so a wide-but-SHORT
+   width term scales with viewport WIDTH, but min() caps it by viewport HEIGHT (the vh term) so a wide-but-SHORT
    window can't scale the type up past what fits vertically. The no-scroll goal is height-bound — a
    width-only fluid font made the tallest screen (Blitz + Show Codes) scroll on short/wide windows.
    Clamped to [0.875rem, 1.1875rem] (≈14–19px at the default 16px root); rem honors the user's browser
-   font-size (accessibility). The 1.8vh height factor is a first calibration to tune on real devices
-   (smaller ⇒ fits shorter screens; larger ⇒ bigger type when there's vertical room). */
-html{font-size:clamp(0.875rem, min(0.86rem + 0.4vw, 1.8vh), 1.1875rem)}
+   font-size (accessibility). The width base (0.95rem) + height factor (1.95vh) were tuned UP on real
+   devices (2026-06-07): the first 0.86rem/1.8vh calibration rendered ~15px on iPhone — a touch small
+   vs the old fixed 16px, with vertical room to spare on the tallest screen. Re-tune here on real
+   devices (smaller height factor ⇒ fits shorter screens; larger ⇒ bigger type when there's room). */
+html{font-size:clamp(0.875rem, min(0.95rem + 0.4vw, 1.95vh), 1.1875rem)}
 /* Reduced-motion groundwork (C2): decorative-motion durations multiply by --motion-scale, which
    drops to 0 under the OS "Reduce Motion" setting, making them instant. Functional motion — the
    .bar countdown (transform:scaleX, set inline in JS) and the color flashes (.flash-*, which are
