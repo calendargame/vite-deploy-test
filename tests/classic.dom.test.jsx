@@ -630,3 +630,59 @@ describe('Classic — Override credits a question at most once (fix 2026-06-06)'
     expect(statValue('Score')).toBe('1/1')
   })
 })
+
+// ── Back-browse Override must not count the streak past a live MISS (deliberate fix, 2026-06-08) ──
+// Found by the C1 deeper-fuzz strong oracle and verified here END-TO-END through the real <App/> with
+// actual button clicks (proving it's a reachable user sequence, not just an engine artifact): burn the
+// LIVE question (a scored miss), then Back to an earlier wrong and Override it to credit. The streak
+// recompute EXCLUDED the live question, so it counted PAST the live miss — the Streak read 1/1 instead
+// of 0/1 (and that inflated streak then inflated Best on the next correct answer). Both stayed ≤ Score,
+// so the good≤played / streak≤good checks couldn't catch it; the exact-history oracle did. Fixed in
+// gameReducer Path 1 (liveStreakContribution). Both tests fail RED against the pre-fix engine.
+describe('Classic — back-browse Override past a live miss (fix 2026-06-08)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('wrong → New → Reveal (live miss) → Back → Override: Streak is 0/1, not 1/1', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1))) // Q1 wrong (creditable later) → Score 0/1, Streak 0/0
+    fireEvent.click(ctrl('New')) // advance, Q1 pushed to history
+    fireEvent.click(ctrl('Reveal')) // burn Q2 = a scored MISS, still LIVE → 0/2
+    expect(statValue('Score')).toBe('0/2')
+    expect(statValue('Streak')).toBe('0/0')
+    fireEvent.click(ctrl('<')) // browse back to Q1 (the live Q2 miss parks aside)
+    fireEvent.click(ctrl('Override')) // Path 1: credit Q1 — must NOT count the streak past the Q2 miss
+    expect(statValue('Score')).toBe('1/2')
+    expect(statValue('Streak')).toBe('0/1') // was 1/1 before the fix (the live Q2 miss was skipped)
+    // Returning to the live edge keeps it honest.
+    fireEvent.click(ctrl('New')) // advance the Q2 miss into history
+    expect(statValue('Score')).toBe('1/2')
+    expect(statValue('Streak')).toBe('0/1')
+  })
+
+  it('downstream: the wrongly-counted streak does not later inflate Best', () => {
+    mountApp()
+    const q1 = pressNewAndRead()
+    fireEvent.click(dayBtn(wrongName(q1))) // Q1 wrong
+    fireEvent.click(ctrl('New'))
+    fireEvent.click(ctrl('Reveal')) // Q2 scored miss, still live
+    fireEvent.click(ctrl('<')) // back to Q1
+    fireEvent.click(ctrl('Override')) // credit Q1; streak 0 (live Q2 miss), not 1
+    fireEvent.click(ctrl('New')) // advance Q2 miss → clean edge
+    const q3 = readDate()
+    fireEvent.click(dayBtn(correctName(q3))) // answer Q3 correct → Streak 1/1 (Best = the true max run)
+    expect(statValue('Score')).toBe('2/3')
+    expect(statValue('Streak')).toBe('1/1') // was 2/2 before the fix (Best inflated by the bad streak)
+  })
+})

@@ -140,3 +140,39 @@ describe('score-integrity regressions (C1 expanded-fuzz fixes, 2026-06-07)', () 
     expect(s.stack[s.stack.length - 1].hasCredit).toBe(true) // Q1 stays a real credit
   })
 })
+
+// The C1 DEEPER-fuzz fix (2026-06-08): an EXACT score oracle (good == reconstructed credits, plus
+// best + clean-edge streak — not just the inequalities) on the Classic/Deduction fuzz surface caught
+// a streak bug the inequalities couldn't: a back-browse Override credits an OLDER entry while a
+// more-recent LIVE question is a scored MISS — but the streak recompute (streaksFromStacks) EXCLUDES
+// the live question, so it counted the streak PAST that miss (streak stayed ≤ good, so it slipped the
+// good≤played / streak≤good checks). The inflated streak then inflated `best` via the next correct
+// answer's Math.max. Fixed in gameReducer Path 1 by folding the live question's true contribution
+// (liveStreakContribution: a scored miss → trailing 0, a scored live credit → +1) into the recompute.
+describe('score-integrity regressions (C1 deeper-fuzz fix, 2026-06-08)', () => {
+  it('a back-browse Override does not count the streak past a more-recent live MISS', () => {
+    let s = initEngine(D1)
+    s = answerAt(s, wOf(D1), D2) // Q1 wrong (creditable later) → played 1, good 0
+    s = neu(s, D2) // push Q1 (miss), advance to D2
+    s = reveal(s) // burn D2 = a scored MISS, still LIVE (not advanced)
+    s = back(s) // browse Q1; the live D2-miss parks in forwardStack as isLive
+    s = override(s, D3) // Path 1: credit Q1 — must NOT count the streak past the live D2 miss
+    expect(s.stats).toMatchObject({ good: 1, streak: 0, best: 1 }) // was streak 1 (live miss skipped)
+    s = neu(s, D3) // advance the D2 miss into history; at a clean edge the streak stays 0
+    expect(s.stats).toMatchObject({ played: 2, good: 1, streak: 0, best: 1 })
+    expect(s.stats.streak).toBeLessThanOrEqual(s.stats.good)
+  })
+
+  it('a streak inflated past a live miss does not later inflate best (downstream of the same bug)', () => {
+    let s = initEngine(D1)
+    s = answerAt(s, wOf(D1), D2) // Q1 wrong
+    s = neu(s, D2) // push Q1 miss, at D2
+    s = reveal(s) // burn D2 (scored miss, still live)
+    s = back(s) // browse Q1
+    s = override(s, D3) // credit Q1; streak must be 0 (live D2 miss), not 1
+    s = neu(s, D3) // advance the D2 miss → clean edge, streak 0
+    s = answerAt(s, cOf(D3), D1) // answer D3 correct → streak 1 (NOT 2); best stays the true max run = 1
+    expect(s.stats).toMatchObject({ good: 2, streak: 1, best: 1 }) // was best 2 (inflated by the bad streak)
+    expect(s.stats.best).toBeLessThanOrEqual(s.stats.good)
+  })
+})

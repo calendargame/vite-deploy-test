@@ -1,0 +1,491 @@
+// ─────────────────────────────────────────────────────────────────────────
+// tests/engine/fuzzHarness.js — the shared, importable guts of the fuzz / bug survey.
+//
+// Extracted from fuzz.test.js so BOTH the vitest suite (fuzz.test.js) and standalone sweep
+// scripts can drive the same deterministic generator. The test file is now a thin wrapper that calls
+// runFuzzProfile(); a one-time deeper sweep is `FUZZ_SCALE=N npx vitest run tests/engine/fuzz.test.js`
+// (N multiplies each profile's sequence count). See fuzz.test.js for the full design notes.
+// ─────────────────────────────────────────────────────────────────────────
+import {
+  gameReducer,
+  initEngine,
+  correctIndexOf,
+  effectiveSaveStats,
+} from '../../src/engine/gameReducer.js'
+import { checkGameInvariants } from '../../src/engine/invariants.js'
+import { computeStreaks } from '../../src/engine/streak.js'
+
+// Big-sweep knob: FUZZ_SCALE multiplies every profile's sequence COUNT (not its step length).
+export const SCALE = Math.max(1, Math.floor(Number(process.env.FUZZ_SCALE) || 1))
+
+// Seeded PRNG (mulberry32) — deterministic, so a failing seed reproduces exactly.
+export function mulberry32(a) {
+  return function () {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const chance = (rnd, p) => rnd() < p
+
+// ── Valid question generators (so nextDate covers every mode's question kind) ──
+function randWeekday(rnd) {
+  return {
+    y: 1700 + Math.floor(rnd() * 400),
+    m: 1 + Math.floor(rnd() * 12),
+    d: 1 + Math.floor(rnd() * 28), // 1-28 is valid in every month
+    _fmt: 'numeric-ymd',
+    _jul: false,
+  }
+}
+function randDayPuzzle(rnd) {
+  const b = randWeekday(rnd)
+  const options = [b.d]
+  while (options.length < 4) {
+    const o = 1 + Math.floor(rnd() * 28)
+    if (!options.includes(o)) options.push(o)
+  }
+  return { type: 'day', y: b.y, m: b.m, d: b.d, w: 0, options }
+}
+function randYearPuzzle(rnd) {
+  const b = randWeekday(rnd)
+  return { type: 'year', y: b.y, m: b.m, d: b.d, w: 0, options: [b.y, b.y + 1, b.y + 2, b.y + 3] }
+}
+function randMonthPuzzle(rnd) {
+  const b = randWeekday(rnd)
+  const other = (b.m % 12) + 1
+  return {
+    type: 'month',
+    y: b.y,
+    m: b.m,
+    d: b.d,
+    w: 0,
+    options: ['A', 'B'],
+    boxes: [
+      { label: 'A', months: [b.m] },
+      { label: 'B', months: [other] },
+    ],
+  }
+}
+function randDate(rnd) {
+  const r = rnd()
+  if (r < 0.55) return randWeekday(rnd)
+  if (r < 0.7) return randDayPuzzle(rnd)
+  if (r < 0.85) return randYearPuzzle(rnd)
+  return randMonthPuzzle(rnd)
+}
+// Number of answer options for the current question (for picking a wrong index).
+function optionCount(q) {
+  if (q.type === 'month') return q.boxes.length
+  if (q.type) return q.options.length
+  return 7
+}
+
+// Replicate the hook's overrideAvail gate so OVERRIDE is only dispatched when the APP would dispatch
+// it — exercising the real 5 paths instead of the no-op fall-through.
+function overrideAvail(state, saveStats) {
+  const last = state.stack[state.stack.length - 1]
+  const retro =
+    !state.locked &&
+    !state.revealed &&
+    !state.countedWrong &&
+    !state.canOverrideCorrect &&
+    state.pendingWrongOverride == null &&
+    !!last &&
+    !last.overrideUsed &&
+    last.capsule?.snapshot != null
+  return (
+    effectiveSaveStats(state, saveStats) &&
+    (state.countedWrong ||
+      state.canOverrideCorrect ||
+      (state.pendingWrongOverride != null && !last?.overrideUsed) ||
+      retro) &&
+    !state.overrideUsedThisQ
+  )
+}
+
+// ── Weighting profiles ───────────────────────────────────────────────────────
+export const PROFILES = {
+  uniform: {
+    name: 'uniform',
+    seedBase: 1,
+    seqs: 5000,
+    steps: 250,
+    weights: {
+      ANSWER: 2,
+      NEW: 1,
+      REVEAL: 1,
+      SHOW_CODES_OPEN: 1,
+      SHOW_CODES_CLOSE: 1,
+      BACK: 1,
+      FORWARD: 1,
+      OVERRIDE: 1,
+      RESET: 1,
+      REGEN: 1,
+      LOCK_REVEAL: 1,
+      TIMEOUT_MISS: 1,
+      RESET_ROUND: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.8,
+    pTracking: 0.5,
+    pTimingOff: 0.5,
+    pSolveTime: 0.5,
+    pAnswerCorrect: 0.5,
+    pComplete: 0.2,
+    pNoAdvance: 0.2,
+  },
+  'override-heavy': {
+    name: 'override-heavy',
+    seedBase: 1_000_000,
+    seqs: 4500,
+    steps: 320,
+    weights: {
+      ANSWER: 5,
+      OVERRIDE: 5,
+      BACK: 3,
+      FORWARD: 2,
+      NEW: 2,
+      REVEAL: 2,
+      SHOW_CODES_OPEN: 2,
+      SHOW_CODES_CLOSE: 1,
+      LOCK_REVEAL: 1,
+      TIMEOUT_MISS: 1,
+      RESET: 1,
+      REGEN: 1,
+      RESET_ROUND: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.9,
+    pTracking: 0.5,
+    pTimingOff: 0.5,
+    pSolveTime: 0.5,
+    pAnswerCorrect: 0.5,
+    pComplete: 0.1,
+    pNoAdvance: 0.1,
+  },
+  'aox-complete-heavy': {
+    name: 'aox-complete-heavy',
+    seedBase: 2_000_000,
+    seqs: 6000,
+    steps: 230,
+    weights: {
+      ANSWER: 6,
+      OVERRIDE: 4,
+      NEW: 2,
+      BACK: 2,
+      FORWARD: 1,
+      REVEAL: 1,
+      SHOW_CODES_OPEN: 1,
+      SHOW_CODES_CLOSE: 1,
+      RESET: 1,
+      REGEN: 1,
+      RESET_ROUND: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.85,
+    pTracking: 0.6,
+    pTimingOff: 0.2,
+    pSolveTime: 0.6,
+    pAnswerCorrect: 0.8,
+    pComplete: 0.7,
+    pNoAdvance: 0.7,
+  },
+  'reveal-heavy': {
+    name: 'reveal-heavy',
+    seedBase: 3_000_000,
+    seqs: 4500,
+    steps: 300,
+    weights: {
+      REVEAL: 4,
+      SHOW_CODES_OPEN: 3,
+      NEW: 3,
+      BACK: 3,
+      OVERRIDE: 3,
+      FORWARD: 2,
+      TIMEOUT_MISS: 2,
+      LOCK_REVEAL: 2,
+      ANSWER: 2,
+      SHOW_CODES_CLOSE: 1,
+      RESET: 1,
+      REGEN: 1,
+      RESET_ROUND: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.85,
+    pTracking: 0.5,
+    pTimingOff: 0.5,
+    pSolveTime: 0.5,
+    pAnswerCorrect: 0.5,
+    pComplete: 0.05,
+    pNoAdvance: 0.1,
+  },
+  // ── strongOracle profiles (Classic/Deduction surface) ──
+  'classic-strict': {
+    name: 'classic-strict',
+    seedBase: 4_000_000,
+    seqs: 5000,
+    steps: 300,
+    strongOracle: true,
+    weights: {
+      ANSWER: 4,
+      OVERRIDE: 4,
+      BACK: 3,
+      FORWARD: 2,
+      NEW: 2,
+      REVEAL: 2,
+      SHOW_CODES_OPEN: 2,
+      SHOW_CODES_CLOSE: 1,
+      RESET: 1,
+      REGEN: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.85,
+    pTracking: 0.5,
+    pTimingOff: 0.5,
+    pSolveTime: 0.5,
+    pAnswerCorrect: 0.5,
+    pComplete: 0,
+    pNoAdvance: 0,
+  },
+  'deep-history': {
+    name: 'deep-history',
+    seedBase: 5_000_000,
+    seqs: 1500,
+    steps: 600,
+    strongOracle: true,
+    weights: {
+      ANSWER: 5,
+      NEW: 4,
+      BACK: 4,
+      OVERRIDE: 3,
+      FORWARD: 3,
+      REVEAL: 1,
+      SHOW_CODES_OPEN: 1,
+      SHOW_CODES_CLOSE: 1,
+      REGEN: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.92,
+    pTracking: 0.5,
+    pTimingOff: 0.5,
+    pSolveTime: 0.5,
+    pAnswerCorrect: 0.6,
+    pComplete: 0,
+    pNoAdvance: 0,
+  },
+  'times-churn': {
+    name: 'times-churn',
+    seedBase: 6_000_000,
+    seqs: 4500,
+    steps: 300,
+    strongOracle: true,
+    weights: {
+      ANSWER: 5,
+      OVERRIDE: 4,
+      NEW: 3,
+      BACK: 3,
+      FORWARD: 2,
+      REVEAL: 1,
+      SHOW_CODES_OPEN: 1,
+      SHOW_CODES_CLOSE: 1,
+      RESET: 1,
+      REGEN: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.9,
+    pTracking: 0.8,
+    pTimingOff: 0.5,
+    pSolveTime: 0.9,
+    pAnswerCorrect: 0.55,
+    pComplete: 0,
+    pNoAdvance: 0,
+  },
+}
+
+// Weighted pick of one action kind.
+function pickKind(rnd, weights) {
+  let total = 0
+  for (const k in weights) total += weights[k]
+  let r = rnd() * total
+  for (const k in weights) {
+    r -= weights[k]
+    if (r < 0) return k
+  }
+  for (const k in weights) return k
+}
+
+// ── The STRONG, EXACT score oracle (strongOracle profiles only) ────────────────────────────────
+// Reconstructs the chronological credit sequence the SAME way the reducer's streaksFromStacks does
+// (back-stack ++ the live/browsed question ++ the de-reversed, non-live forward-stack) and cross-
+// checks good == credits, best == longest run, and (at a clean live edge) streak == trailing run.
+export function checkStrongScoreOracle(state) {
+  const v = []
+  const s = state.stats
+  const stackBools = state.stack.map((e) => !!e.hasCredit)
+  const fwdBools = state.forwardStack
+    .slice()
+    .reverse()
+    .filter((e) => !e.isLive)
+    .map((e) => !!e.hasCredit)
+  const browsing = state.backDepth > 0
+  const history = browsing ? [...stackBools, !!state.browseHasCredit, ...fwdBools] : stackBools
+
+  const credits = history.filter(Boolean).length
+  if (s.good !== credits) v.push(`STRONG good(${s.good}) != reconstructed credits(${credits})`)
+
+  const { bestStreak } = computeStreaks(history)
+  if (s.best !== bestStreak) v.push(`STRONG best(${s.best}) != history best(${bestStreak})`)
+
+  if (!browsing && !state.countedWrong && !state.revealed) {
+    const { curStreak } = computeStreaks(stackBools)
+    if (s.streak !== curStreak) v.push(`STRONG streak(${s.streak}) != stack trailing(${curStreak})`)
+  }
+  return v
+}
+
+// Fresh coverage counters.
+export function freshCov() {
+  return {
+    good: 0,
+    override: 0,
+    overrideBrowsing: 0,
+    back: 0,
+    deduction: 0,
+    complete: 0,
+    noAdvance: 0,
+    reveal: 0,
+    maxStack: 0,
+    maxTimes: 0,
+  }
+}
+
+export function runSequence(seed, steps, cov, profile) {
+  const rnd = mulberry32(seed)
+  const useJulian = chance(rnd, profile.pJulian)
+  let state = initEngine(randDate(rnd))
+  const recent = []
+
+  for (let i = 0; i < steps; i++) {
+    const saveStats = chance(rnd, profile.pSaveStats)
+    const tracking = chance(rnd, profile.pTracking)
+    const timingOff = chance(rnd, profile.pTimingOff)
+    const nextDate = randDate(rnd)
+    const kind = pickKind(rnd, profile.weights)
+    const t = () => (chance(rnd, profile.pSolveTime) ? rnd() * 3 : null)
+    let action = null
+
+    switch (kind) {
+      case 'ANSWER': {
+        const corr = correctIndexOf(state.date, useJulian)
+        const idx = chance(rnd, profile.pAnswerCorrect)
+          ? corr
+          : Math.floor(rnd() * optionCount(state.date))
+        const elapsed = t()
+        const complete = chance(rnd, profile.pComplete)
+        action = { type: 'ANSWER', idx, useJulian, elapsed, tracking, saveStats, nextDate, complete }
+        if (complete) cov.complete++
+        break
+      }
+      case 'NEW':
+        action = { type: 'NEW', nextDate, useJulian, saveStats }
+        break
+      case 'REVEAL':
+        action = { type: 'REVEAL', useJulian, elapsed: t(), saveStats }
+        break
+      case 'SHOW_CODES_OPEN':
+        action = { type: 'SHOW_CODES', open: true, useJulian, elapsed: t(), saveStats }
+        break
+      case 'SHOW_CODES_CLOSE':
+        action = { type: 'SHOW_CODES', open: false, useJulian, elapsed: null, saveStats }
+        break
+      case 'BACK':
+        action = { type: 'BACK' }
+        break
+      case 'FORWARD':
+        action = { type: 'FORWARD', useJulian }
+        break
+      case 'OVERRIDE':
+        if (overrideAvail(state, saveStats)) {
+          const noAdvance = chance(rnd, profile.pNoAdvance)
+          action = { type: 'OVERRIDE', useJulian, tracking, timingOff, nextDate, noAdvance }
+          cov.override++
+          if (noAdvance) cov.noAdvance++
+          if (state.backDepth > 0) cov.overrideBrowsing++
+        }
+        break
+      case 'RESET':
+        action = { type: 'RESET', timingOff, nextDate }
+        break
+      case 'REGEN':
+        action = { type: 'REGEN_DATE', nextDate }
+        break
+      case 'LOCK_REVEAL':
+        action = { type: 'LOCK_REVEAL', useJulian }
+        break
+      case 'TIMEOUT_MISS':
+        action = { type: 'TIMEOUT_MISS', useJulian, saveStats }
+        break
+      case 'RESET_ROUND':
+        action = { type: 'RESET_ROUND' }
+        break
+    }
+
+    if (!action) continue
+    if (kind === 'BACK' && state.stack.length) cov.back++
+    if (state.date.type) cov.deduction++
+    const prev = state
+    state = gameReducer(state, action)
+    if (state.stats.good > 0) cov.good++
+    if (state.stack.length > cov.maxStack) cov.maxStack = state.stack.length
+    if (state.stats.times.length > cov.maxTimes) cov.maxTimes = state.stats.times.length
+    if (kind === 'REVEAL' && !prev.countedWrong && state.countedWrong) cov.reveal++
+    const S = state.stats
+    recent.push(
+      `${i}:${kind}${saveStats ? '+' : '-'} p${S.played}g${S.good}s${S.streak}b${S.best} bd${state.backDepth} stk${state.stack.length} cw${state.countedWrong ? 1 : 0} coc${state.canOverrideCorrect ? 1 : 0}`,
+    )
+    if (recent.length > 20) recent.shift()
+
+    const violations = checkGameInvariants(state, useJulian)
+    if (profile.strongOracle) violations.push(...checkStrongScoreOracle(state))
+    if (violations.length) {
+      return {
+        ok: false,
+        profile: profile.name,
+        seed,
+        step: i,
+        violations,
+        action,
+        prevStats: prev.stats,
+        nowStats: state.stats,
+        recent,
+      }
+    }
+  }
+  return { ok: true }
+}
+
+// Run every sequence of a profile; throw (with a reproduce line) on the first invariant violation.
+export function runFuzzProfile(name) {
+  const profile = PROFILES[name]
+  const cov = freshCov()
+  const seqs = profile.seqs * SCALE
+  for (let i = 0; i < seqs; i++) {
+    const seed = profile.seedBase + i
+    const r = runSequence(seed, profile.steps, cov, profile)
+    if (!r.ok) {
+      throw new Error(
+        `INVARIANT VIOLATED — profile ${r.profile}, seed ${r.seed}, step ${r.step}:\n` +
+          `  ${r.violations.join('\n  ')}\n` +
+          `  action:   ${JSON.stringify(r.action)}\n` +
+          `  stats before: ${JSON.stringify(r.prevStats)}\n` +
+          `  stats after:  ${JSON.stringify(r.nowStats)}\n` +
+          `  recent actions (oldest→newest):\n    ${r.recent.join('\n    ')}\n` +
+          `  reproduce: runSequence(${r.seed}, ${r.step + 1}, freshCov(), PROFILES['${r.profile}'])`,
+      )
+    }
+  }
+  return cov
+}

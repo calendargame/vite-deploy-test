@@ -84,6 +84,13 @@ export default defineConfig([
     files: ['*.config.js'],
     languageOptions: { globals: globals.node },
   },
+  // Tests run under vitest in Node with a jsdom DOM, so they need BOTH browser globals (the DOM tests
+  // touch document/window) AND Node globals (the fuzz harness reads process.env.FUZZ_SCALE to scale a
+  // one-time sweep). The base block above grants only browser globals.
+  {
+    files: ['tests/**/*.{js,jsx,ts,tsx}'],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+  },
   // MUST be last: turns off any ESLint rules that would conflict with Prettier's
   // formatting, so the two tools never fight (ESLint = correctness, Prettier = style).
   prettier,

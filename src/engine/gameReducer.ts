@@ -393,6 +393,26 @@ const streaksFromStacks = (
   return computeStreaks(history)
 }
 
+// The live question's contribution to the credit history when browsing back (Path 1). The question
+// we backed away from is parked in forwardStack as the `isLive` entry, which streaksFromStacks
+// EXCLUDES — correctly for a FRESH live question (it isn't part of the played history), but WRONGLY
+// for a PLAYED one: a live question that was scored still belongs to the trailing history exactly as
+// advance() will later push it, so a scored MISS at the live edge must break the trailing streak and
+// a scored live credit must extend it. Mirrors advance()'s push rule — contributes iff it was
+// answered AND Save Stats was on for it (saveStatsFrozen === true) — then 'credit' only for a clean
+// first-try correct (green grid, not revealed, not burned), else 'miss'. Returns null = transparent.
+// Without this, an Override that credits an OLDER entry while a more-recent live MISS sits at the edge
+// leaves the streak counting PAST that miss, and the inflated streak then inflates best via the next
+// answer's Math.max. (C1 deeper-fuzz fix, 2026-06-08 — found by the strong-oracle profiles.)
+const liveStreakContribution = (live: StackEntry | undefined): 'credit' | 'miss' | null => {
+  if (!live) return null
+  const ls = live.liveState
+  const btns = live.btns
+  const wasAnswered = !!btns && Object.keys(btns).length > 0
+  if (!wasAnswered || !ls || ls.saveStatsFrozen !== true) return null
+  return computeHasCredit(btns) && !ls.revealed && !ls.countedWrong ? 'credit' : 'miss'
+}
+
 export function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     // ── NEW ────────────────────────────────────────────────────────────────
@@ -670,7 +690,17 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           stats = { ...state.stats, good: Math.max(0, state.stats.good - 1), times: cut }
           persistBtns = oneBtn(correct, 'override-wrong')
         }
-        const { curStreak, bestStreak } = streaksFromStacks(state.stack, state.forwardStack, newHC)
+        const streaks = streaksFromStacks(state.stack, state.forwardStack, newHC)
+        let curStreak = streaks.curStreak
+        let bestStreak = streaks.bestStreak
+        // Fold in the live question we backed away from (excluded by streaksFromStacks): a scored
+        // miss at the live edge breaks the trailing streak (→ 0); a scored live credit extends it.
+        const live = liveStreakContribution(state.forwardStack.find((e) => e.isLive))
+        if (live === 'miss') curStreak = 0
+        else if (live === 'credit') {
+          curStreak += 1
+          bestStreak = Math.max(bestStreak, curStreak)
+        }
         return {
           ...s0,
           stats: { ...stats, streak: curStreak, best: bestStreak },
