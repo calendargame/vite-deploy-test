@@ -498,7 +498,16 @@ export function runSequence(seed, steps, cov, profile) {
           : Math.floor(rnd() * optionCount(state.date))
         const elapsed = t()
         const complete = chance(rnd, profile.pComplete)
-        action = { type: 'ANSWER', idx, useJulian, elapsed, tracking, saveStats, nextDate, complete }
+        action = {
+          type: 'ANSWER',
+          idx,
+          useJulian,
+          elapsed,
+          tracking,
+          saveStats,
+          nextDate,
+          complete,
+        }
         if (complete) cov.complete++
         break
       }

@@ -24,13 +24,22 @@ const reveal = (s) => gameReducer(s, { type: 'REVEAL', ...ctx, elapsed: null })
 const neu = (s, nextDate) => gameReducer(s, { type: 'NEW', ...ctx, nextDate })
 const back = (s) => gameReducer(s, { type: 'BACK' })
 const forward = (s) => gameReducer(s, { type: 'FORWARD', useJulian: false })
-const showCodesOpen = (s) => gameReducer(s, { type: 'SHOW_CODES', open: true, ...ctx, elapsed: null })
+const showCodesOpen = (s) =>
+  gameReducer(s, { type: 'SHOW_CODES', open: true, ...ctx, elapsed: null })
 const answerAt = (s, idx, nextDate) =>
   gameReducer(s, { type: 'ANSWER', idx, ...ctx, tracking: false, elapsed: null, nextDate })
 const answerTimed = (s, idx, elapsed, nextDate) =>
   gameReducer(s, { type: 'ANSWER', idx, ...ctx, tracking: true, elapsed, nextDate })
 const answerComplete = (s, idx) =>
-  gameReducer(s, { type: 'ANSWER', idx, ...ctx, tracking: false, elapsed: null, nextDate: D2, complete: true })
+  gameReducer(s, {
+    type: 'ANSWER',
+    idx,
+    ...ctx,
+    tracking: false,
+    elapsed: null,
+    nextDate: D2,
+    complete: true,
+  })
 const override = (s, nextDate, extra = {}) =>
   gameReducer(s, { type: 'OVERRIDE', ...ctx, tracking: false, timingOff: true, nextDate, ...extra })
 
@@ -59,7 +68,14 @@ describe('score-integrity regressions (C2 fuzz fixes, 2026-06-06)', () => {
     // Answer correct as a completing solve (stays on screen, reversible), then Override to flip it
     // to wrong. good/streak/best must ALL revert to 0 — best must not stay stranded at 1.
     let s = initEngine(D1)
-    s = gameReducer(s, { type: 'ANSWER', idx: C, ...ctx, elapsed: null, tracking: false, complete: true })
+    s = gameReducer(s, {
+      type: 'ANSWER',
+      idx: C,
+      ...ctx,
+      elapsed: null,
+      tracking: false,
+      complete: true,
+    })
     expect(s.stats).toMatchObject({ good: 1, streak: 1, best: 1 })
     s = override(s, D2, { noAdvance: true })
     expect(s.stats.good).toBe(0)
@@ -221,7 +237,8 @@ describe('score-integrity regressions (C2 fuzz fix — Show Codes on a held comp
 describe('score-integrity regressions (C2 timed-mode fuzz fixes, 2026-06-08)', () => {
   // helpers (timingOff:false so Override Path 4 actually advances; the file's `override` uses timingOff:true)
   const lockReveal = (s) => gameReducer(s, { type: 'LOCK_REVEAL', useJulian: false })
-  const timeoutMiss = (s) => gameReducer(s, { type: 'TIMEOUT_MISS', useJulian: false, saveStats: true })
+  const timeoutMiss = (s) =>
+    gameReducer(s, { type: 'TIMEOUT_MISS', useJulian: false, saveStats: true })
   const overrideAdvance = (s, nextDate) =>
     gameReducer(s, { type: 'OVERRIDE', ...ctx, tracking: false, timingOff: false, nextDate })
 
@@ -259,7 +276,15 @@ describe('score-integrity regressions (C2 timed-mode fuzz fixes, 2026-06-08)', (
     const before = s.stats
     // Answering the resolved question must be a no-op — else it credits good (0→1) and advance pushes
     // it to history as a REVEALED non-credit, so good (1) > reconstructable credits (0).
-    s = gameReducer(s, { type: 'ANSWER', idx: C, ...ctx, tracking: false, elapsed: null, nextDate: D2, complete: false })
+    s = gameReducer(s, {
+      type: 'ANSWER',
+      idx: C,
+      ...ctx,
+      tracking: false,
+      elapsed: null,
+      nextDate: D2,
+      complete: false,
+    })
     expect(s.stats).toEqual(before) // unchanged — was wrongly credited to good 1 without the lock
     expect(checkStrongScoreOracle(s)).toEqual([])
   })

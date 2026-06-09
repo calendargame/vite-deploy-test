@@ -768,7 +768,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           // played is unchanged (a miss is still a play). (C1 fuzz fix, 2026-06-07 — the Path-2 twin of
           // the Path-4 stale-snapshot clobber the override-/reveal-heavy + deeper profiles surfaced.)
           const cut = dropContributedTime([...state.stats.times], u.contributedTime)
-          const { curStreak, bestStreak } = streaksFromStacks(state.stack, state.forwardStack, false)
+          const { curStreak, bestStreak } = streaksFromStacks(
+            state.stack,
+            state.forwardStack,
+            false,
+          )
           stats = {
             ...state.stats,
             good: Math.max(0, state.stats.good - 1),

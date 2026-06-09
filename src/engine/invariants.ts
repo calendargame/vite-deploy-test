@@ -31,8 +31,7 @@
 import { correctIndexOf } from './gameReducer.js'
 import type { GameState, Question, Stats } from './gameReducer.js'
 
-const isCount = (n: unknown): n is number =>
-  typeof n === 'number' && Number.isInteger(n) && n >= 0
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0
 
 // Score/stats integrity. `where` labels the source (e.g. 'stats', or a saved silo name) so a
 // report says exactly which counter broke. Exported so the persistence tripwire can reuse it on
@@ -85,7 +84,8 @@ export function checkGameInvariants(state: GameState, useJulian: boolean): strin
   const v: string[] = []
   v.push(...checkStatsInvariants(state.stats, 'stats'))
   v.push(...checkQuestionInvariants(state.date, useJulian, 'date'))
-  if (!isCount(state.backDepth)) v.push(`backDepth is not a non-negative integer (${state.backDepth})`)
+  if (!isCount(state.backDepth))
+    v.push(`backDepth is not a non-negative integer (${state.backDepth})`)
   if (state.backDepth !== state.forwardStack.length)
     v.push(`backDepth(${state.backDepth}) != forwardStack.length(${state.forwardStack.length})`)
   if (!isCount(state.questionId))

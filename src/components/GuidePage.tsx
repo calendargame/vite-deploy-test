@@ -143,28 +143,28 @@ export default function GuidePage() {
           adjusts your score. After a correct answer: undoes the credit and adjusts your score.
         </p>
         <p>
-          You can also override the most recent past date directly from a fresh, untouched live question
-          (in any mode) — Override is enabled when the live date hasn't been answered yet, and
-          tapping it flips your previous date's right/wrong status. A previously correct date that's
-          been retroactively flipped to wrong shows up with a green-and-red diagonal split:
+          You can also override the most recent past date directly from a fresh, untouched live
+          question (in any mode) — Override is enabled when the live date hasn't been answered yet,
+          and tapping it flips your previous date's right/wrong status. A previously correct date
+          that's been retroactively flipped to wrong shows up with a green-and-red diagonal split:
           green-upper-left (originally correct) and red-lower-right (now counted wrong). You can
           only override each date once. Overriding a wrong answer (regardless of how) clears any
           wrong highlights; only the correct answer is shown.
         </p>
         <p>
-          In Blitz, you can override past dates
-          after the round ends to adjust your score and saved bests; and with Allow Mistakes off (or
-          in Per Question), overriding a correct answer to wrong during a round ends the round, just
-          like a wrong answer. In AoX without Allow Mistakes, overriding a correct answer ends the
-          run. Override is locked when Save Stats is off.
+          In Blitz, you can override past dates after the round ends to adjust your score and saved
+          bests; and with Allow Mistakes off (or in Per Question), overriding a correct answer to
+          wrong during a round ends the round, just like a wrong answer. In AoX without Allow
+          Mistakes, overriding a correct answer ends the run. Override is locked when Save Stats is
+          off.
         </p>
         <p>
           <b>Show Codes</b> — reveals the calculation codes for the current date. Counts as a miss
-          only while the date is still unresolved; once you've answered it (right or wrong), revealed
-          it, or are browsing back, opening the codes is just a review and changes nothing. In Blitz,
-          opening Show Codes during a round ends the round and records your bests;
-          in Flash it freezes the countdown so the date stays on screen while you study the codes.
-          In AoX without Allow Mistakes, opening Show Codes ends the run.
+          only while the date is still unresolved; once you've answered it (right or wrong),
+          revealed it, or are browsing back, opening the codes is just a review and changes nothing.
+          In Blitz, opening Show Codes during a round ends the round and records your bests; in
+          Flash it freezes the countdown so the date stays on screen while you study the codes. In
+          AoX without Allow Mistakes, opening Show Codes ends the run.
         </p>
       </GuideSection>
       <GuideSection id="stats" title="Stats" openId={open} onToggle={toggle}>
@@ -210,26 +210,25 @@ export default function GuidePage() {
           re-enabling them brings the same numbers back.
         </p>
         <p className="text-purple-300/70 text-[12px]">
-          Timing stats behave differently: timing
-          pauses entirely while hidden — no times are recorded. When you turn timing back on, the
-          current date is regenerated if it's still unanswered; if you've already answered wrong,
-          revealed the answer, or shown codes, the date stays until you advance yourself. If any
-          questions were answered while timing was hidden, a desync would arise on re-enable, so the
-          three timing stat boxes merge into a single "Enable and Reset Stats?" confirmation — tap
-          it again within 3 seconds to confirm (turn on and full reset), or tap anywhere else to
-          cancel.
+          Timing stats behave differently: timing pauses entirely while hidden — no times are
+          recorded. When you turn timing back on, the current date is regenerated if it's still
+          unanswered; if you've already answered wrong, revealed the answer, or shown codes, the
+          date stays until you advance yourself. If any questions were answered while timing was
+          hidden, a desync would arise on re-enable, so the three timing stat boxes merge into a
+          single "Enable and Reset Stats?" confirmation — tap it again within 3 seconds to confirm
+          (turn on and full reset), or tap anywhere else to cancel.
         </p>
         <p className="text-purple-300/70 text-[12px]">
-          When Save Stats is off, all stat boxes site-wide (across every mode, including
-          AoX) show '—' with strikethrough labels, dim, and become non-interactive — toggling timing
-          or scoring is disabled until Save Stats is turned back on, which prevents accidentally
+          When Save Stats is off, all stat boxes site-wide (across every mode, including AoX) show
+          '—' with strikethrough labels, dim, and become non-interactive — toggling timing or
+          scoring is disabled until Save Stats is turned back on, which prevents accidentally
           creating stat desyncs. Turning Save Stats on while timing is also on regenerates an
           unanswered date for a clean fresh start.
         </p>
         <p className="text-purple-300/70 text-[12px]">
-          When timing stats are off, leaving and returning
-          to a mode preserves the current question exactly as you left it — same date, same answers,
-          codes panel in the same state. In all other modes, stats are always visible.
+          When timing stats are off, leaving and returning to a mode preserves the current question
+          exactly as you left it — same date, same answers, codes panel in the same state. In all
+          other modes, stats are always visible.
         </p>
       </GuideSection>
       <GuideSection id="keyboard" title="Keyboard Input" openId={open} onToggle={toggle}>

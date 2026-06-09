@@ -25,7 +25,8 @@ function mulberry32(a) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
-const realWday = (y, m, d, jul) => (jul && isJulianDate(y, m, d) ? wdayJulian(y, m, d) : wday(y, m, d))
+const realWday = (y, m, d, jul) =>
+  jul && isJulianDate(y, m, d) ? wdayJulian(y, m, d) : wday(y, m, d)
 
 // A generated weekday question must be a real, answerable date.
 function checkWeekday(q, lo, hi) {
@@ -96,7 +97,14 @@ describe('date-generation fuzz — every setting yields a real, answerable quest
       for (let i = 0; i < 40000; i++) {
         const [lo, hi] = pick(rnd, RANGES)
         const julian = rnd() < 0.5
-        const q = randomDate(lo, hi, julian, pick(rnd, CHANCES), pick(rnd, CHANCES), pick(rnd, CHANCES))
+        const q = randomDate(
+          lo,
+          hi,
+          julian,
+          pick(rnd, CHANCES),
+          pick(rnd, CHANCES),
+          pick(rnd, CHANCES),
+        )
         count++
         const v = checkWeekday(q, lo, hi)
         if (v.length) {
@@ -136,7 +144,9 @@ describe('date-generation fuzz — every setting yields a real, answerable quest
         if (p != null) built[p.type]++
         const v = checkPuzzle(p)
         if (v.length) {
-          violations.push(`${type} [${lo},${hi}] ${JSON.stringify(opts)} → ${JSON.stringify(p)} :: ${v.join('; ')}`)
+          violations.push(
+            `${type} [${lo},${hi}] ${JSON.stringify(opts)} → ${JSON.stringify(p)} :: ${v.join('; ')}`,
+          )
           if (violations.length >= 5) break
         }
       }
