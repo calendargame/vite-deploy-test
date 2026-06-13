@@ -15,6 +15,7 @@ import {
 import { checkGameInvariants } from '../../src/engine/invariants.js'
 import { computeStreaks } from '../../src/engine/streak.js'
 import { computeHasCredit } from '../../src/engine/answerButtons.js'
+import { createRefModel, applyRefModel, compareRefModel } from './referenceModel.js'
 
 // Big-sweep knob: FUZZ_SCALE multiplies every profile's sequence COUNT (not its step length).
 export const SCALE = Math.max(1, Math.floor(Number(process.env.FUZZ_SCALE) || 1))
@@ -377,6 +378,71 @@ export const PROFILES = {
     pComplete: 0,
     pNoAdvance: 0,
   },
+  // ── referenceModel profiles (C2 Part 3) ──
+  // Run the fully-INDEPENDENT reference score model (referenceModel.js) in lockstep with the
+  // reducer — a second implementation of the scoring contract compared field-by-field after every
+  // action (played/good/times/best + clean-edge streak; `played` has no other exact oracle). The
+  // strong oracle runs alongside (layered nets). Same exclusions as the strong profiles:
+  // RESET_ROUND keeps stats while wiping history — underivable from a question ledger by design.
+  'ref-classic': {
+    name: 'ref-classic',
+    seedBase: 9_000_000,
+    seqs: 4000,
+    steps: 300,
+    strongOracle: true,
+    referenceModel: true,
+    weights: {
+      ANSWER: 5,
+      OVERRIDE: 4,
+      BACK: 3,
+      FORWARD: 2,
+      NEW: 3,
+      REVEAL: 2,
+      SHOW_CODES_OPEN: 2,
+      SHOW_CODES_CLOSE: 1,
+      RESET: 1,
+      REGEN: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.85,
+    pTracking: 0.6,
+    pTimingOff: 0.5,
+    pSolveTime: 0.6,
+    pAnswerCorrect: 0.55,
+    pComplete: 0,
+    pNoAdvance: 0,
+  },
+  // The full reducer surface: the AoX held-complete corner + both timed timeouts, under the model.
+  'ref-full': {
+    name: 'ref-full',
+    seedBase: 10_000_000,
+    seqs: 4000,
+    steps: 300,
+    strongOracle: true,
+    referenceModel: true,
+    weights: {
+      ANSWER: 5,
+      OVERRIDE: 4,
+      BACK: 3,
+      FORWARD: 2,
+      NEW: 2,
+      REVEAL: 1,
+      SHOW_CODES_OPEN: 2,
+      SHOW_CODES_CLOSE: 1,
+      LOCK_REVEAL: 2,
+      TIMEOUT_MISS: 2,
+      RESET: 1,
+      REGEN: 1,
+    },
+    pJulian: 0.3,
+    pSaveStats: 0.85,
+    pTracking: 0.6,
+    pTimingOff: 0.4,
+    pSolveTime: 0.6,
+    pAnswerCorrect: 0.65,
+    pComplete: 0.35,
+    pNoAdvance: 0.35,
+  },
 }
 
 // Weighted pick of one action kind.
@@ -472,6 +538,7 @@ export function freshCov() {
     heldComplete: 0, // reached a HELD completing solve (locked + canOverrideCorrect at the live edge)
     browsedHeld: 0, //  back-browsed AWAY from a held live credit (the oracle's isLive-fold corner)
     timedTimeout: 0, // fired a LOCK_REVEAL / TIMEOUT_MISS on the active live edge (timed surface)
+    refChecks: 0, //   reference-model comparisons performed (referenceModel profiles)
   }
 }
 
@@ -479,6 +546,10 @@ export function runSequence(seed, steps, cov, profile) {
   const rnd = mulberry32(seed)
   const useJulian = chance(rnd, profile.pJulian)
   let state = initEngine(randDate(rnd))
+  // The independent reference model (C2 Part 3) — replays the same action stream and is compared
+  // field-by-field after every action. Seeded with the only display facts it consumes: whether the
+  // initial question is a Deduction puzzle (and, per ANSWER, whether the click was correct).
+  const model = profile.referenceModel ? createRefModel(!!state.date.type) : null
   const recent = []
 
   for (let i = 0; i < steps; i++) {
@@ -571,6 +642,19 @@ export function runSequence(seed, steps, cov, profile) {
     if (state.date.type) cov.deduction++
     const prev = state
     state = gameReducer(state, action)
+    // Reference model: apply the same action with its exogenous DISPLAY facts — isCorrect from the
+    // PRE-action question (the one the user acted on), and the on-screen question kind before/after
+    // (nextDed for plain advances; liveDedAfter for the view-ruled RESET/REGEN keep-vs-replace).
+    // See referenceModel.js for the independence boundary.
+    if (model) {
+      applyRefModel(model, kind, action, {
+        isCorrect:
+          action.type === 'ANSWER' ? action.idx === correctIndexOf(prev.date, useJulian) : null,
+        nextDed: action.nextDate ? !!action.nextDate.type : undefined,
+        liveDedAfter: !!state.date.type,
+      })
+      cov.refChecks++
+    }
     if (state.stats.good > 0) cov.good++
     if (state.stack.length > cov.maxStack) cov.maxStack = state.stack.length
     if (state.stats.times.length > cov.maxTimes) cov.maxTimes = state.stats.times.length
@@ -588,6 +672,7 @@ export function runSequence(seed, steps, cov, profile) {
 
     const violations = checkGameInvariants(state, useJulian)
     if (profile.strongOracle) violations.push(...checkStrongScoreOracle(state))
+    if (model) violations.push(...compareRefModel(model, state))
     if (violations.length) {
       return {
         ok: false,

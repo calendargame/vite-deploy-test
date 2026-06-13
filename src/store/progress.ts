@@ -4,6 +4,7 @@ import type { Stats } from '../engine/gameReducer.js'
 import type { LookupEntry } from '../components/LookupCard.jsx'
 import { captureError } from '../observability/sentry.js'
 import { checkStatsInvariants } from '../engine/invariants.js'
+import { useSettings } from './settings.js'
 
 // store/progress.ts — saved gameplay progress (Stage D1).
 //
@@ -108,6 +109,28 @@ const PERSISTED_KEYS: (keyof ProgressValues)[] = [
   'lookupHistory',
 ]
 
+// v1 → v2: AoX Best keys gain the julianChance dimension (C2). The original key omitted it —
+// inconsistent with Blitz/Sudden and with the How-to-Play contract ("Bests are tracked per exact
+// configuration"), and it merged genuinely different difficulties when the year range spans
+// pre-1582. Old: `n|allowMistakes|fmt|leapChance|janFebChance|minY-maxY|useJulian` (7 segments);
+// new inserts julianChance before the year range (Blitz's segment order). The inserted value is the
+// user's CURRENT Julian Chance setting — the best available stand-in for the one their records were
+// earned under (it's 'random' unless they changed it; the settings store has already hydrated by
+// migrate time, since this module imports it). Injective: old keys differing anywhere still differ.
+// Exported for tests.
+export function migrateAoxBestKeys(
+  aoxBest: Record<string, AoxBest>,
+  julianChance: string,
+): Record<string, AoxBest> {
+  const out: Record<string, AoxBest> = {}
+  for (const [key, val] of Object.entries(aoxBest)) {
+    const seg = key.split('|')
+    out[seg.length === 7 ? [...seg.slice(0, 5), julianChance, ...seg.slice(5)].join('|') : key] =
+      val
+  }
+  return out
+}
+
 export const useProgress = create<ProgressState>()(
   persist(
     (set) => ({
@@ -130,8 +153,19 @@ export const useProgress = create<ProgressState>()(
       resetProgress: () => set(() => makeProgressDefaults()),
     }),
     {
-      name: 'cg-progress-v1', // localStorage key (versioned for future migrations)
-      version: 1,
+      name: 'cg-progress-v1', // localStorage key (fixed — the `version` field below gates migrations)
+      version: 2,
+      // Saved-shape migrations (run once at hydrate when the stored version is older).
+      migrate: (persisted, version) => {
+        const state = persisted as Partial<ProgressValues>
+        if (version < 2 && state?.aoxBest && typeof state.aoxBest === 'object') {
+          return {
+            ...state,
+            aoxBest: migrateAoxBestKeys(state.aoxBest, useSettings.getState().julianChance),
+          }
+        }
+        return state
+      },
       // Persist only the data values, never the setter functions.
       partialize: (state) =>
         Object.fromEntries(PERSISTED_KEYS.map((k) => [k, state[k]])) as Partial<ProgressState>,

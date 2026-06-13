@@ -327,3 +327,106 @@ describe('Flash — bug fixes (Reveal availability + Show Codes freeze)', () => 
     expect(statValue('Score')).toBe('0/1') // Reveal counted the miss
   })
 })
+
+// ── Bug fix (C2): back-browsing must show the browsed date + its review tools ────────────────────
+// Flash hides the LIVE date outside a flash (the memory-game premise), but the same gate
+// (shouldShowTimerDate) also swallowed BACK-BROWSED entries: after a round ended by answering,
+// browsing back showed "—" with Reveal AND Show Codes disabled — the grid's green/red marks were
+// visible but the date itself wasn't, and Override stayed ENABLED on the invisible question. An
+// original-app wart carried through the migration, contradicting How-to-Play ("Back — return to
+// the previous date. The answer is shown…", listing Flash by name). A browsed entry is resolved
+// history — never a peek — so browsing now shows the date and enables the read-only review tools,
+// matching Classic.
+describe('Flash — bug fix (back-browse shows the browsed date, C2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('after a round, Back shows the browsed date (not "—") and Show Codes works read-only', () => {
+    mountApp()
+    switchToFlash()
+    act(() => {
+      fireEvent.click(ctrl('Begin'))
+    })
+    const d = readDate()
+    act(() => {
+      fireEvent.click(dayBtn(correctName(d)))
+    }) // correct → round over, live date hides
+    expect(dateDisplayText()).toBe('—')
+    act(() => {
+      fireEvent.click(ctrl('<'))
+    }) // browse back to the answered question
+    // The browsed date is SHOWN (the whole point of reviewing), with its Q# badge.
+    expect(readDate()).toEqual(d)
+    expect(screen.getByText('Q1')).toBeInTheDocument()
+    // Show Codes is available read-only on the resolved entry (was disabled via date=null)…
+    const codesBtn = ctrl('Show Codes')
+    expect(isDisabled(codesBtn)).toBe(false)
+    const before = statValue('Score')
+    act(() => {
+      fireEvent.click(codesBtn)
+    })
+    expect(ctrl('Hide Codes')).toBeInTheDocument()
+    expect(statValue('Score')).toBe(before) // …and penalty-free (read-only review)
+    // Forward returns to the live edge: the un-flashed live question stays hidden ("—").
+    act(() => {
+      fireEvent.click(ctrl('Hide Codes'))
+    })
+    act(() => {
+      fireEvent.click(ctrl('>'))
+    })
+    expect(dateDisplayText()).toBe('—')
+  })
+})
+
+// ── C2: the mode-switch contract (characterization — completes the cross-mode net) ──────────────
+// Flash's half of the rule every timer mode follows: leaving the mode stops a LIVE flash (the
+// useStatsHideToggles onHide teardown) — no hidden timer keeps running; you return to the idle
+// dash with your lifetime stats intact.
+describe('Flash — C2: mode switch mid-flash stops the flash', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('switching away during a live flash and back lands on the idle dash (flash stopped)', () => {
+    mountApp()
+    switchToFlash()
+    act(() => {
+      fireEvent.click(ctrl('Begin'))
+    })
+    expect(dateDisplayText()).toMatch(/^-?\d+-\d+-\d+$/) // the reveal is live
+    act(() => {
+      fireEvent.keyDown(window, { key: 'K' }) // detour into Classic mid-flash
+    })
+    act(() => {
+      vi.advanceTimersByTime(5000) // nothing may keep ticking while away
+    })
+    switchToFlash()
+    expect(dateDisplayText()).toBe('—') // idle dash — the flash did not survive
+    expect(ctrl('Begin')).toBeInTheDocument()
+  })
+})

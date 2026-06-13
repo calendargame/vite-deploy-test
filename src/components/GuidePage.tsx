@@ -588,6 +588,9 @@ export default function GuidePage() {
         </p>
         <p>
           <b>Allow Mistakes</b> — wrong answers don't end the run but don't count toward your score.
+          With Allow Mistakes on, Reveal and Show Codes also count as a miss but keep the run going:
+          they show the answer (or the codes) so you can study it, then a <b>Next</b> button moves
+          you on to the next date. With Allow Mistakes off, Reveal or Show Codes ends the run.
         </p>
         <p>
           <b>One-By-One</b> — hides the date between solves. Press Continue to reveal each new date.
@@ -616,8 +619,12 @@ export default function GuidePage() {
           from the run that set it is also shown (e.g. the median from the run that set your best
           average). A <i>Same Round</i> or <i>Different Rounds</i> tag tells you whether your best
           average and best median came from the same exceptional run, or from two different strong
-          ones. If you override a correct answer that set a new best, the best is also restored. The
-          score display freezes when a run ends and only resets after pressing Reset.
+          ones. Bests stay honest under Override: a finished run's record follows its corrected
+          stats — overriding away one of its credited solves (on the last question or while browsing
+          back) restores the best that stood before the run, and a correction that changes the run's
+          average or median updates its record to match. The score display freezes when a run ends
+          and only resets after pressing Reset. Leaving AoX in the middle of a run resets it; a
+          finished run's summary is preserved when you return.
         </p>
         <p>
           Bests are tracked per exact configuration: AoX size (n), Allow Mistakes, Date Format (or
@@ -743,8 +750,10 @@ export default function GuidePage() {
           are recorded. A round also ends if you give up on the current date with Reveal or Show
           Codes, or — with Allow Mistakes off (or in Per Question) — if you override a correct
           answer to wrong. You can then browse your round's history with Back/Forward and override
-          past dates to adjust your score and saved bests. Overriding a wrong answer that ended the
-          round resumes it.
+          past dates to adjust your score and saved bests. Overriding the wrong answer that ended
+          the round resumes it — the countdown picks up where it left off (Per Round) or a fresh
+          question timer starts on the next date (Per Question), and the round's best isn't locked
+          in until the round ends for real.
         </p>
         <p>
           Streak is hidden in Per Question since any wrong answer ends the round, making streak
@@ -758,10 +767,11 @@ export default function GuidePage() {
           stored and reappear when you switch back. Best score and best streak are tracked
           independently in Per Round; a <i>Same Round</i> or <i>Different Rounds</i> tag tells you
           whether your best score and best streak came from the same exceptional round, or from two
-          different strong ones. If you leave Blitz after a round ends without pressing Reset, the
-          round state (bests, history, final date) is preserved when you return. Press Reset to
-          clear your current round, unlock the settings, and start fresh. Changing settings while
-          idle resets the current round.
+          different strong ones. Leaving Blitz in the middle of a round abandons it — you return to
+          a fresh, idle Blitz (no hidden countdown keeps running while you're away). If you leave
+          after a round ends without pressing Reset, the round state (bests, history, final date) is
+          preserved when you return. Press Reset to clear your current round, unlock the settings,
+          and start fresh. Changing settings while idle resets the current round.
         </p>
       </GuideSection>
       <GuideSection id="lookup" title="Lookup" openId={open} onToggle={toggle}>

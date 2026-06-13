@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { App } from '../src/main.jsx'
 import { useSettings } from '../src/store/settings.js'
+import { useProgress } from '../src/store/progress.js'
 import { wday } from '../src/lib/calendar.js'
 import { DAY } from '../src/lib/format.js'
 
@@ -406,6 +407,86 @@ describe('AoX — characterization (batch 6: Reveal + Show Codes)', () => {
     expect(dayState(correctName(d))).toBe('correct')
     expect(ctrl('Hide Codes')).toBeInTheDocument() // panel open
   })
+
+  // C2 Q4: Reveal with Allow Mistakes ON must count a miss and let the run CONTINUE — not lock the
+  // revealed question with no exit (before the fix the only ways forward were Override-to-credit or
+  // Reset). The answer is SHOWN, then a "Next" button advances (so you actually see it first).
+  it('Reveal (Allow Mistakes on) counts a miss, SHOWS the answer, and a Next button advances', () => {
+    mountApp()
+    switchToAox()
+    click('Allow Mistakes')
+    setN(3)
+    click('Begin')
+    const d1 = readDate()
+    click('Reveal')
+    expect(statValue('Score')).toBe('0/1') // the revealed question counts as a played miss
+    expect(statValue('Streak')).toBe('0/0')
+    expect(dayState(correctName(d1))).toBe('correct') // the answer is SHOWN (not advanced past)
+    expect(readDate()).toEqual(d1) // still on the revealed date — did NOT auto-advance
+    expect(ctrl('Next')).toBeInTheDocument() // a Next button is offered to continue
+    click('Next')
+    const d2 = readDate() // now advanced to a fresh date — the run continues
+    expect(d2).not.toEqual(d1)
+    answerCorrect() // the grid is live again
+    expect(statValue('Score')).toBe('1/2')
+    expect(statValue('Streak')).toBe('1/1')
+  })
+
+  // Show Codes must function the SAME as Reveal under Allow Mistakes ON: count a miss, open the codes
+  // to read, then Next advances (it's no longer a dead-end once you close/continue).
+  it('Show Codes (Allow Mistakes on) counts a miss and a Next button continues the run', () => {
+    mountApp()
+    switchToAox()
+    click('Allow Mistakes')
+    setN(3)
+    click('Begin')
+    const d1 = readDate()
+    click('Show Codes')
+    expect(statValue('Score')).toBe('0/1') // counted as a played miss
+    expect(ctrl('Hide Codes')).toBeInTheDocument() // panel open to read the codes
+    expect(ctrl('Next')).toBeInTheDocument() // Next offered (same as Reveal)
+    click('Next') // advances + closes the panel
+    const d2 = readDate()
+    expect(d2).not.toEqual(d1)
+    expect(ctrl('Show Codes')).toBeInTheDocument() // panel closed on the new date
+    answerCorrect()
+    expect(statValue('Score')).toBe('1/2')
+  })
+})
+
+// ── Batch 6b: C2 Q2-B — practice mode (Save Stats off) lets Override rescue a misclick-ended run ──
+// AoX already always-tracks internally, so the off-gate on Override was the only thing stopping a
+// fat-finger rescue in practice mode. Now Override is available specifically to continue a run a
+// misclick ended (Allow Mistakes off), even with stats hidden.
+describe('AoX — C2 Q2-B (Save Stats off: Override rescues a misclick-failed run)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pin()
+    useSettings.getState().setSaveStats(false) // practice mode
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    useSettings.getState().setSaveStats(true)
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('a misclick fails the run, but Override is available (and continues it) even with Save Stats off', () => {
+    mountApp()
+    switchToAox()
+    setN(3) // Allow Mistakes off by default
+    click('Begin')
+    const d = readDate()
+    answerWrong() // misclick → run fails (the failed date is shown)
+    expect(ctrl('Reset')).toBeInTheDocument() // run is over
+    expect(isDisabled(ctrl('Override'))).toBe(false) // rescuable in practice mode (the off-gate fix)
+    click('Override') // credit + resume
+    const d2 = readDate()
+    expect(d2).not.toEqual(d) // advanced to a fresh date — the run continues
+    answerCorrect() // and the grid is live again
+    expect(d2).not.toEqual(readDate())
+  })
 })
 
 // ── Batch 7: bug #2 fix — override-to-wrong fails the run (Allow Mistakes off) ───
@@ -472,5 +553,152 @@ describe('AoX — bug fix (Show Codes on a completed run is review-only, C2)', (
     expect(statValue('Score')).toBe('2/2')
     expect(statValue('Streak')).toBe('2/2')
     expect(ctrl('Hide Codes')).toBeInTheDocument() // the codes panel opened
+  })
+})
+
+// ── Batch 9: bug fix — a post-completion Override reconciles the Best (C2, AoX run layer) ───────
+// A completed run records its Best, but its history stays browsable and overridable — and a
+// back-browse Override (Path 1) can retract one of the run's n credited solves. Before the fix, only
+// the LIVE-edge reversal of the completing solve rolled the Best back (rollbackBest was gated on
+// !inBack), so a back-browse un-credit left the recorded Best standing on a run that no longer has
+// n credits — a fabricated Best (the AoX analog of the Blitz cross-round rollback bug, and the same
+// "stale-or-absent snapshot" family). The fix reconciles the Best continuously while the run's
+// stats change post-completion, exactly like Blitz's timerDone effect: still standing (good ≥ n) →
+// the pre-run record improved by the standing avg/med; no longer standing → the pre-run record.
+describe('AoX — bug fix (post-completion Override reconciles the Best, C2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pin()
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('back-browse Override on a completed run rolls the Best back (the credit was retracted)', () => {
+    mountApp()
+    switchToAox()
+    setN(2)
+    click('Begin')
+    answerCorrect() // 1/1, advance
+    answerCorrect() // 2/2 → run completes, Best recorded
+    expect(bestVal('Average')).toMatch(/^\d+\.\d{2}s$/)
+    click('<') // review the first solve
+    expect(isDisabled(ctrl('Override'))).toBe(false)
+    click('Override') // Path-1 un-credit: retract the first solve (2/2 → 1/2)
+    expect(statValue('Score')).toBe('1/2')
+    // The run no longer stands at 2 credits, so its recorded Best must not stand either.
+    expect(bestVal('Average')).toBe('—')
+    expect(bestVal('Median')).toBe('—')
+  })
+
+  it('retracting a later run restores the EARLIER run’s Best, not empty (cross-run floor)', () => {
+    // Controlled solve clock: the engine times answers via performance.now() deltas.
+    let fakeNow = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => fakeNow)
+    const tick = (ms) => {
+      fakeNow += ms
+    }
+    mountApp()
+    switchToAox()
+    setN(2)
+    // Run 1: two 2.0s solves → Best Average 2.00s.
+    click('Begin')
+    tick(2000)
+    answerCorrect()
+    tick(2000)
+    answerCorrect()
+    expect(bestVal('Average')).toBe('2.00s')
+    click('Reset')
+    // Run 2: two 0.5s solves → a new record, 0.50s (overwriting the stored value).
+    click('Begin')
+    tick(500)
+    answerCorrect()
+    tick(500)
+    answerCorrect()
+    expect(bestVal('Average')).toBe('0.50s')
+    // Retract one of run 2's solves: run 2 no longer stands → run 1's 2.00s must come back —
+    // not '—' (lost) and not 0.50s (fabricated).
+    click('<')
+    click('Override')
+    expect(statValue('Score')).toBe('1/2')
+    expect(bestVal('Average')).toBe('2.00s')
+    expect(bestVal('Median')).toBe('2.00s')
+  })
+
+  it('a mid-done settings change cannot strand the rollback under the wrong key', () => {
+    // Settings stay editable while a run sits done, and the year range is part of the Best key — so
+    // the panel's bestKey can MOVE between the recording and a later rollback. The reconcile must
+    // target the key the run RECORDED under (the old rollbackBest bailed on the key mismatch and
+    // left the fabricated record standing).
+    mountApp()
+    switchToAox()
+    setN(2)
+    click('Begin')
+    answerCorrect()
+    answerCorrect() // run done; Best recorded under the begin-time key
+    const oldKey = '2|false|numeric-ymd|random|random|random|1583-10000|true'
+    expect(useProgress.getState().aoxBest[oldKey]?.avg).toEqual(expect.any(Number)) // recorded here
+    act(() => {
+      useSettings.getState().setMinY(3000) // the panel's key moves; the done run is left alone
+    })
+    expect(isDisabled(ctrl('Override'))).toBe(false)
+    click('Override') // reverse the completing solve at the live edge → the run no longer stands
+    expect(statValue('Score')).toBe('1/2')
+    // The record under the RUN's key rolled back to its pre-run (empty) floor.
+    expect(useProgress.getState().aoxBest[oldKey]?.avg ?? null).toBeNull()
+  })
+})
+
+// ── C2: the mode-switch contract (characterization — completes the cross-mode net) ──────────────
+// Every timer mode tears down a RUNNING round/run when you leave it (the original App's rule;
+// Blitz's missing teardown was fixed this pass) while an ENDED one survives the detour. Pin AoX's
+// half: a running run resets to idle on switch-away; a done run (and its recorded Best) survives.
+describe('AoX — C2: mode switch mid-run resets, done state survives', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    pin()
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('switching away mid-run and back lands on a FRESH idle AoX (run reset)', () => {
+    mountApp()
+    switchToAox()
+    setN(3)
+    click('Begin')
+    answerCorrect() // 1/1, running
+    expect(statValue('Score')).toBe('1/1')
+    act(() => {
+      fireEvent.keyDown(window, { key: 'K' }) // detour into Classic mid-run
+    })
+    switchToAox()
+    expect(ctrl('Begin')).toBeInTheDocument() // back to idle
+    expect(statValue('Score')).toBe('0/0')
+  })
+
+  it('a COMPLETED run (and its recorded Best) survives the same detour', () => {
+    mountApp()
+    switchToAox()
+    setN(2)
+    click('Begin')
+    answerCorrect()
+    answerCorrect() // run done, Best recorded
+    const best = bestVal('Average')
+    expect(best).toMatch(/^\d+\.\d{2}s$/)
+    act(() => {
+      fireEvent.keyDown(window, { key: 'K' })
+    })
+    switchToAox()
+    expect(statValue('Score')).toBe('2/2') // the finished run's summary is still there
+    expect(bestVal('Average')).toBe(best)
+    expect(ctrl('Reset')).toBeInTheDocument()
   })
 })

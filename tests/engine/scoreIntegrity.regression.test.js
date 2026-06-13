@@ -289,3 +289,57 @@ describe('score-integrity regressions (C2 timed-mode fuzz fixes, 2026-06-08)', (
     expect(checkStrongScoreOracle(s)).toEqual([])
   })
 })
+
+describe('score-integrity regressions (C2 Session-6 — TIMEOUT_MISS engine-consistency guards)', () => {
+  const timeoutMiss = (s) => gameReducer(s, { type: 'TIMEOUT_MISS', ...ctx })
+
+  it('TIMEOUT_MISS on a LOCKED question is a no-op (the question is already resolved)', () => {
+    // A per-question timeout can only hit the active live question in the app (the round ends with
+    // it), but the ENGINE must not rely on the component for that: a resolved/locked question must
+    // not take another stat. ANSWER already guards on `locked`; TIMEOUT_MISS now does too.
+    const locked = gameReducer(initEngine(D1), { type: 'LOCK_REVEAL', useJulian: false })
+    expect(locked.locked).toBe(true)
+    const s = timeoutMiss(locked)
+    expect(s).toEqual(locked) // identical state — no played increment, no flag churn
+  })
+
+  it('TIMEOUT_MISS on an already-burned (countedWrong) question does not count played AGAIN', () => {
+    // The wrong answer already took the question's played increment; a timeout resolving the same
+    // question must not double-count it (played is one-per-question, like every other stat path).
+    const wrong = answerAt(initEngine(D1), wOf(D1), D2) // burned: played 1, streak 0
+    expect(wrong.stats.played).toBe(1)
+    expect(wrong.countedWrong).toBe(true)
+    const s = timeoutMiss(wrong)
+    expect(s.stats.played).toBe(1) // NOT 2
+    expect(s.locked).toBe(true) // still resolves the question (locks + reveals)
+    expect(s.revealed).toBe(true)
+  })
+})
+
+describe('score-integrity regressions (C2 Session-6 — the reference model’s first catch)', () => {
+  it('a reversed-away credit cannot be re-credited via Path 4 after advancing (flip-flop)', () => {
+    // The flip-flop the independent reference model caught (ref-full seed 10000013): a held
+    // completing solve is REVERSED via Override (Path 2, noAdvance — its one override is spent and
+    // its correction capsule nulled), stays on screen, then a plain advance (NEW) pushed it with
+    // overrideUsed reset to false AND armed pendingWrongOverride — so a second Override re-credited
+    // the very credit the first one took away (good 0→1 on an already-corrected question). The
+    // strong oracle can't see it (good and hasCredit move together); the inequalities hold. The
+    // contract is one override per question: arming now requires the question to still carry its
+    // correction capsule (prevStatsSnapshot) — the same eligibility gate Paths 1/5 already use.
+    let s = answerComplete(initEngine(D1), cOf(D1)) // the held completing solve: 1/1, credited
+    expect(s.stats.good).toBe(1)
+    expect(s.canOverrideCorrect).toBe(true)
+    s = override(s, D2, { noAdvance: true }) // reverse it: the credit is overridden away
+    expect(s.stats.good).toBe(0)
+    expect(s.countedWrong).toBe(true)
+    expect(s.prevStatsSnapshot).toBeNull() // the correction capsule is spent
+    s = neu(s, D3) // advance past the reversed question
+    expect(s.stats.played).toBe(1)
+    // No retroactive-credit arming: the question already had its one override.
+    expect(s.pendingWrongOverride).toBeNull()
+    // And even a raw OVERRIDE dispatch falls through without re-crediting.
+    const after = override(s, D3)
+    expect(after.stats.good).toBe(0)
+    expect(after.stats).toEqual(s.stats)
+  })
+})

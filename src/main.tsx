@@ -26,9 +26,10 @@ import { CODES_CLOSE_MS } from './lib/constants.js'
 import { useSettings } from './store/settings.js'
 import { useModePrefs } from './store/modePrefs.js'
 import { useProgress } from './store/progress.js'
-import type { AoxBest } from './store/progress.js'
+import type { AoxBest, BlitzBest, SuddenBest } from './store/progress.js'
 import { calcAvg, calcLast, calcMed } from './engine/stats.js'
 import { reconcileBlitzBest, reconcileSuddenBest } from './engine/blitzBest.js'
+import { reconcileAoxStanding, aoxBestEqual, emptyAoxBest } from './engine/aoxBest.js'
 import { useGameEngine } from './engine/useGameEngine.js'
 import { reportWebVitals } from './dev/webVitals.js'
 import type { Question, WeekdayQuestion, DedPuzzle, GameState } from './engine/gameReducer.js'
@@ -367,7 +368,7 @@ interface DedOpts {
 
 
 
-    const DEPLOY_TS=new Date('2026-06-09T05:37:19Z');
+    const DEPLOY_TS=new Date('2026-06-13T20:48:21Z');
 
     // ============================================================
     // makeDedPuzzle — the PURE Deduction puzzle generator (mode-untangle Step 4).
@@ -615,8 +616,12 @@ interface DedOpts {
       const [shown,setShown]=useState(false);           // One-By-One: is the current date revealed? (always true for non-One-By-One while running)
       const n=Math.max(2,Math.min(1000,parseInt(aoxN)||10));
       // Best keying: bests are siloed per difficulty configuration. Dimensions: n, allowMistakes,
-      // format (random→'random' bucket), leapChance, janFebChance, year range, useJulian.
-      const bestKey=`${n}|${allowMistakes}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${minY}-${maxY}|${useJulian}`;
+      // format (random→'random' bucket), leapChance, janFebChance, julianChance, year range,
+      // useJulian — the SAME dimensions as Blitz/Sudden (and as How-to-Play documents). The original
+      // app omitted julianChance here only (an inconsistency: it changes the Julian-date mix, a real
+      // difficulty dimension when the range spans pre-1582); fixed C2 — store/progress.ts migrates
+      // saved v1 keys so no recorded Best is orphaned.
+      const bestKey=`${n}|${allowMistakes}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
       // saveStats:true ALWAYS → the run tracks + completes regardless of the global Save Stats
       // setting (which only dims the display + gates recording a Best). timingOff:false → solve
       // times are recorded for the average.
@@ -629,18 +634,27 @@ interface DedOpts {
       const isRunning=runPhase==="running";
       const isLocked=runPhase==="done"||runPhase==="failed";
       const inBack=state.backDepth>0;
+      // Allow-Mistakes-on Reveal / Show Codes reveal the answer + count a miss but DON'T advance (so
+      // you can SEE the answer / read the codes). The run then waits on a "Next" button to continue —
+      // the revealed/show-coded question is a resolved miss on the live edge. (A plain wrong answer
+      // sets countedWrong but NOT revealed, so it stays retryable — no Next.) (C2 Q4.)
+      const awaitingNext=isRunning&&!inBack&&state.revealed&&state.countedWrong;
 
       // Per-config Best Average / Median (component-owned, like Blitz's Best Score). A run records
-      // its Best on completion; an Override that undoes the completing solve rolls it back, gated
-      // to the run that set it via the run id.
+      // its Best on completion and keeps it RECONCILED while its stats move post-completion (a
+      // back-browse / retro / live-reversal Override can retract or add a credit on the ended run):
+      // standing (good ≥ n) → the pre-run floor improved by the current avg/median; not standing →
+      // the floor restored. See the reconcile effect below (engine/aoxBest.ts owns the pure fold).
       // AoX all-time bests (avg/median, config-keyed) persist across reloads (Stage D1): from the
       // progress store. (bestNew markers + the rollback refs below stay local — per-session/ephemeral.)
       const bests=useProgress(s=>s.aoxBest),setBests=useProgress(s=>s.setAoxBest);
       const [bestNew,setBestNew]=useState<Record<string, { avg: boolean; med: boolean }>>({});
       const nextRunIdRef=useRef(1);
       const currentRunIdRef=useRef<number | null>(null);
-      const prevBestSnapRef=useRef<{ key: string; best: AoxBest } | null>(null);     // {key,best} snapshotted when this run set a Best, for rollback
-      const bestData=bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
+      // The PRE-run Best record {key,best,runId}, latched once when this run records (completion with
+      // Save Stats on) — the floor every post-completion reconcile starts from (see the effect below).
+      const prevBestSnapRef=useRef<{ key: string; best: AoxBest; runId: number } | null>(null);
+      const bestData=bests[bestKey]||emptyAoxBest();
 
       const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
 
@@ -659,37 +673,38 @@ interface DedOpts {
         else{setAoxFrozenDate(state.date);}
       },[state.calcOpen,state.date.y,state.date.m,state.date.d]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-      // Record this run's Best Average/Median (on completion). Compares against the closure
-      // `bests[bestKey]` (the best before this run) and snapshots it for a later rollback.
-      const applyBest=(times: number[])=>{
-        const avg=calcAvg(times),med=calcMed(times),rid=currentRunIdRef.current;
-        if(avg==null||med==null)return;
-        const cur=bests[bestKey]||{avg:null,avgMed:null,avgRoundId:null,med:null,medAvg:null,medRoundId:null};
-        prevBestSnapRef.current={key:bestKey,best:{...cur}};
-        const avgImp=cur.avg==null||avg<cur.avg,medImp=cur.med==null||med<cur.med;
-        setBests(p=>({...p,[bestKey]:{
-          avg:avgImp?avg:cur.avg,avgMed:avgImp?med:cur.avgMed,avgRoundId:avgImp?rid:cur.avgRoundId,
-          med:medImp?med:cur.med,medAvg:medImp?avg:cur.medAvg,medRoundId:medImp?rid:cur.medRoundId,
-        }}));
-        if(avgImp||medImp)setBestNew(p=>{const e=p[bestKey]||{avg:false,med:false};return{...p,[bestKey]:{avg:e.avg||avgImp,med:e.med||medImp}};});
-      };
-      // Restore the Best to its pre-run value when an Override undoes the run that set it.
-      const rollbackBest=()=>{
-        const snap=prevBestSnapRef.current;
-        if(!snap||snap.key!==bestKey)return;
-        setBests(p=>({...p,[bestKey]:{...snap.best}}));
-        setBestNew(p=>{const nx={...p};delete nx[bestKey];return nx;});
-        prevBestSnapRef.current=null;
-      };
-
-      // The run completes when the credited count reaches N: flip to done + record a Best (if Save
-      // Stats on). The completing answer used eng.answer(...,{complete}) so the engine stayed on the
-      // solve; this just transitions the phase. Re-entry is guarded by runPhase.
+      // Run completion + Best reconcile — ONE effect owns every Best write (mirrors Blitz's
+      // timerDone effect). (a) The credited count reaching N completes the run: flip the phase and,
+      // if the global Save Stats is on, LATCH the pre-run Best {key,best,runId} as this run's floor.
+      // Latched once per run: a reversal can resume + re-complete the run, and re-latching then would
+      // capture the run's own record as its floor (the stale-snapshot trap). The completing answer
+      // used eng.answer(...,{complete}) so the engine stayed on the solve; re-entry is phase-guarded.
+      // (b) From the latch on, every stats change re-reconciles the record under the key the run
+      // RECORDED under (the panel's bestKey can move — settings stay editable while a run sits done):
+      // still standing (good ≥ n) → the floor improved by the run's CURRENT avg/median; not standing
+      // (an Override retracted a credit — back-browse Path 1, retro Path 5, or the live reversal) →
+      // the floor restored, as if the run never completed. Before the C2 fix only the live-edge
+      // reversal rolled back (rollbackBest, gated on !inBack), so a back-browse un-credit left a
+      // FABRICATED Best standing on a run with fewer than n credits — and a mid-done settings change
+      // (key moved) dodged even that. ★ markers: an improving write OR-folds into the key's marker
+      // (a prior run's star survives); a write that only restores the floor clears it.
       useEffect(()=>{
-        if(runPhase!=="running"||doneCount<n)return;
-        setRunPhase("done");
-        if(saveStats)applyBest(S.times);
-      },[doneCount,runPhase,n,saveStats]);/* eslint-disable-line react-hooks/exhaustive-deps */
+        if(runPhase==="running"&&doneCount>=n){
+          setRunPhase("done");
+          if(saveStats&&currentRunIdRef.current!=null&&prevBestSnapRef.current?.runId!==currentRunIdRef.current)
+            prevBestSnapRef.current={key:bestKey,best:{...(bests[bestKey]||emptyAoxBest())},runId:currentRunIdRef.current};
+        }
+        const snap=prevBestSnapRef.current;
+        if(!snap||snap.runId!==currentRunIdRef.current)return;   // this run hasn't recorded
+        const {next,avgImp,medImp}=reconcileAoxStanding(snap.best,S.good,n,S.times,snap.runId);
+        setBests(p=>{
+          const cur=p[snap.key]||emptyAoxBest();
+          if(aoxBestEqual(cur,next))return p;
+          if(avgImp||medImp)setBestNew(b=>{const e=b[snap.key]||{avg:false,med:false};return{...b,[snap.key]:{avg:e.avg||avgImp,med:e.med||medImp}};});
+          else setBestNew(b=>{if(!(snap.key in b))return b;const nx={...b};delete nx[snap.key];return nx;});
+          return{...p,[snap.key]:next};
+        });
+      },[runPhase,doneCount,n,saveStats,S.good,S.times,setBests]);/* eslint-disable-line react-hooks/exhaustive-deps */
 
       // Reset the run if the panel is hidden mid-run.
       useEffect(()=>{if(!visible&&runPhase==="running"){eng.resetStats();setRunPhase("idle");setShown(false);}/* eslint-disable-line react-hooks/exhaustive-deps */},[visible]);
@@ -724,9 +739,17 @@ interface DedOpts {
       // and the live toggle is what should gate the button here. Do NOT "consistency-fix" this to
       // effectiveSaveStats — saveStatsThisQ is always true here, so that would wrongly show Override
       // while Save Stats is off.
-      const overrideAvail=saveStats&&!state.overrideUsedThisQ&&(state.countedWrong||state.canOverrideCorrect||(state.pendingWrongOverride!=null&&!last?.overrideUsed)||eng.retroOverrideEligible);
+      // EXCEPTION (C2 Q2-B): when a MISCLICK ended the run (Allow Mistakes off → a wrong answer locks
+      // it as failed), Override rescues the run — credit + continue — even in practice mode (Save
+      // Stats off). The engine already tracks (saveStats:true), so the credit stays integrity-safe;
+      // the off-gate just hid a recovery you'd want for a fat-finger. Only a wrong-answer end (a wrong
+      // button in the grid) qualifies — a deliberate Reveal / Show Codes end does not.
+      const failedMisclickRescue=runPhase==="failed"&&state.countedWrong&&Object.values(state.persistBtns).some(v=>typeof v==='string'&&v.startsWith('wrong'));
+      const overrideAvail=(saveStats||failedMisclickRescue)&&!state.overrideUsedThisQ&&(state.countedWrong||state.canOverrideCorrect||(state.pendingWrongOverride!=null&&!last?.overrideUsed)||eng.retroOverrideEligible);
       const codesDisabled=runPhase==="idle"||(oneByOne&&!shown&&!inBack&&!isLocked);
-      const optionsDisabled=isLocked||state.calcOpen||(oneByOne&&!shown&&!inBack)||runPhase==="idle"||inBack;
+      // awaitingNext dims the grid too — the question is a revealed miss (the engine ignores answers),
+      // and "Next" is the way forward.
+      const optionsDisabled=isLocked||state.calcOpen||awaitingNext||(oneByOne&&!shown&&!inBack)||runPhase==="idle"||inBack;
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
       const scoreDisplay=runPhase==="idle"?"0/0":`${doneCount}/${S.played}`;
       const accuracyDisplay=fmtAccuracyPct(doneCount,S.played);
@@ -744,8 +767,20 @@ interface DedOpts {
         if(i!==correct&&!allowMistakes){eng.lockReveal();setRunPhase("failed");} // wrong + no mistakes → reveal the answer + fail the run
         else if(willAdvance&&oneByOne)setShown(false);                           // One-By-One: hide the freshly-loaded next date until Continue
       };
+      // Allow Mistakes OFF: revealing the answer fails the run. Allow Mistakes ON: Reveal counts as a
+      // played miss and shows the answer, but does NOT advance — the primary button becomes "Next"
+      // (see `awaitingNext`) so you SEE the answer first, then continue. (Auto-advancing here would
+      // batch the reveal + the advance into one render, so the answer would never paint.) Before this
+      // a revealed question was a locked dead-end (AoX has no New button). (C2 Q4 — "miss + advance".)
       const onReveal=()=>{eng.reveal();if(!allowMistakes)setRunPhase("failed");};
+      // Show Codes works the SAME way: opening it on a live question counts a miss + reveals the
+      // answer (Allow Mistakes on) — then "Next" advances when you're done reading. (Allow Mistakes
+      // off fails the run.) So Reveal and Show Codes are consistent: miss → see it → Next. (C2 Q4.)
       const onShowCodes=()=>{const open=!state.calcOpen;eng.showCodes(open);if(open&&!allowMistakes&&isRunning)setRunPhase("failed");};
+      // Advance past a revealed / show-coded miss (Allow Mistakes on) — the run continues. Closes the
+      // codes panel if open, loads the next date (the miss was already counted by Reveal / Show
+      // Codes), and One-By-One hides it until Continue. (C2 Q4.)
+      const onNext=()=>{if(state.calcOpen)eng.showCodes(false);eng.doNew();if(oneByOne)setShown(false);};
       const onOverride=()=>{
         const reverseCompleting=state.canOverrideCorrect&&!state.countedWrong&&!inBack;                 // Path 2: reverse the live completing solve
         const reverseToWrong=reverseCompleting&&state.prevStatsSnapshot&&!state.prevStatsSnapshot.wasWrong;
@@ -754,8 +789,7 @@ interface DedOpts {
         const toWrong=reverseToWrong||retroToWrong;
         const failNow=toWrong&&!allowMistakes;
         if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});   // crediting the current wrong → green flash
-        eng.override({noAdvance:!!(reverseCompleting&&failNow)});
-        if(reverseCompleting)rollbackBest();                                     // the completing solve may have set this run's Best
+        eng.override({noAdvance:!!(reverseCompleting&&failNow)});                // any Best impact reconciles in the effect above (standing fold / floor restore)
         if(failNow)setRunPhase("failed");                                        // a to-wrong override with no mistakes fails the run (bug #2 / unified rule)
         else if(crediting&&runPhase==="failed")setRunPhase("running");           // crediting the wrong that failed the run resumes it
         else if(reverseCompleting&&allowMistakes)setRunPhase("running");         // Allow Mistakes on: reversing the completing solve resumes the run
@@ -765,6 +799,7 @@ interface DedOpts {
       const primaryBtn=runPhase==="idle"
         ?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Begin</button>)
         :isLocked?(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>)
+        :awaitingNext?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={onNext}>Next</button>)
         :(!shown&&oneByOne)?(<button type="button" data-key="N" className="col-span-1 px-3 py-2 rounded-xl btn-solid text-sm font-medium" onClick={startOrContinue}>Continue</button>)
         :(<button type="button" data-key="N" className={`col-span-1 ${RESET_BTN_CLASS}`} onClick={reset}>Reset</button>);
 
@@ -1002,16 +1037,24 @@ interface DedOpts {
 
       const shouldShowTimerDate=active||showTimerDate;
       const flashHiding=active&&flashPhase==="hide";
+      // Browsing back reviews RESOLVED history — never a peek at the live (memory-game) question —
+      // so the hidden-date gate below must not swallow it: the browsed date shows, and Reveal +
+      // Show Codes work read-only on it, matching Classic. (The gate used to hide all three while
+      // browsing — the grid's green/red marks rendered but the date itself read "—" with the
+      // review tools dead while Override stayed ENABLED on the invisible question. An original-app
+      // wart, contradicting How-to-Play's "Back — the answer is shown". C2 fix; Back is disabled
+      // while a flash is active, so inBack never overlaps a live flash.)
+      const inBack=state.backDepth>0;
       const optionsDisabled=!active||state.locked||state.calcOpen||state.calcPenaltyActive;
       // Reveal is available whenever a date is on screen — including DURING the flash (matching
       // Show Codes, which keys off shouldShowTimerDate). Was wrongly locked in the "show" phase
       // via `!showTimerDate&&!flashHiding`; `!shouldShowTimerDate` enables it — bug #5.
-      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive||!shouldShowTimerDate;
+      const revealDisabled=(state.locked&&state.revealed)||state.calcOpen||state.calcPenaltyActive||(!shouldShowTimerDate&&!inBack);
       const baseBtn="w-full rounded-2xl border px-4 py-3 text-base shadow-xs select-none";
       const idleBtn="surface-button";
       const onResetStats=()=>{eng.resetStats();if(active){setActive(false);stopFlash();}setShowTimerDate(false);};
       const date=state.date;
-      const dateText=shouldShowTimerDate?(flashHiding?"…":fmtDate(date.y,date.m,date.d,date._fmt)):"—";
+      const dateText=(shouldShowTimerDate||inBack)?(flashHiding?"…":fmtDate(date.y,date.m,date.d,date._fmt)):"—";
       return(
         <div style={{display:visible?"block":"none"}}>
           <div className={saveStats?"":"opacity-50"}><StatPanel stats={statsArr} armedSpan={armedSpan} armedBtnRef={armedBtnRef}/></div>
@@ -1038,7 +1081,7 @@ interface DedOpts {
                 <button type="button" data-key="R" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${revealDisabled?"opacity-60 pointer-events-none":""}`} onClick={onReveal}>Reveal</button>
                 <button type="button" data-key="O" className={`col-span-1 px-3 py-2 rounded-xl border surface-button text-sm font-medium text-center ${!overrideAvail?"opacity-60 pointer-events-none":""}`} onClick={onOverride}>Override</button>
               </div>
-              <MethodBreakdownSection date={shouldShowTimerDate?date:null} open={state.calcOpen} onOpenChange={onShowCodes} className="" contentClassName="mt-2 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
+              <MethodBreakdownSection date={(shouldShowTimerDate||inBack)?date:null} open={state.calcOpen} onOpenChange={onShowCodes} className="" contentClassName="mt-2 rounded-2xl thin px-4 pt-[3px] pb-1.5" useJulian={state.backDepth>0?(date?._jul??useJulian):useJulian} displayedFormat={date?._fmt||dateFormat}/>
             </div>
           </div>
         </div>
@@ -1076,19 +1119,38 @@ interface DedOpts {
       const suddenBest=useProgress(s=>s.suddenBest),setSuddenBest=useProgress(s=>s.setSuddenBest);
       const [blitzBestNew,setBlitzBestNew]=useState<Record<string, { score: boolean; streak: boolean }>>({}),[suddenBestNew,setSuddenBestNew]=useState<Record<string, boolean>>({});
       const currentRoundIdRef=useRef<number | null>(null),nextRoundIdRef=useRef(1);
-      // The Best that stood BEFORE the current round (snapshotted at Begin). A round that beats the
-      // record OVERWRITES it (only one record + round id is kept), so a later override that drops THIS
-      // round's score must not pull Best below this fallback — the earlier round's achievement still
-      // stands. Mirrors AoX's prevBestSnapRef. (C2 fix — cross-round Best rollback.)
-      const roundBestFallbackRef=useRef({score:0,streak:0,sudden:0});
-      const eng=useGameEngine({label:'blitz',genDate,minY,maxY,useJulian,saveStats,timingOff:false}); // Blitz: timing always tracked
-      const {state,correct,overrideAvail}=eng;
+      // The FULL Best records that stood BEFORE the current round (snapshotted at Begin), serving two
+      // jobs from one snapshot: (a) the reconcile's cross-round rollback FLOOR — a later Override that
+      // drops THIS round's score must not pull Best below the earlier round it overwrote (mirrors
+      // AoX's prevBestSnapRef; C2 — cross-round Best rollback); (b) the resume-REVERT — when an
+      // Override credits a misclick and RESUMES the round, the Best the interrupted round provisionally
+      // saved is rolled back wholesale to these records (it re-saves only when the round genuinely
+      // ends). (C2 Q2-A.)
+      const prevRoundBestRef=useRef<{ blitzBk: string; suddenBk: string; blitz?: BlitzBest; sudden?: SuddenBest }>({blitzBk:'',suddenBk:''});
+      // saveStats:true ALWAYS (like AoX): the round tracks internally regardless of the global Save
+      // Stats toggle, which now gates only the DISPLAY (dimmed "—" stats), whether a Best is recorded,
+      // and whether Override shows while off. Always-tracking keeps the misclick-rescue credit
+      // integrity-safe in practice mode (good ≤ played — played is always incremented on the wrong),
+      // so an unscored question can't hit the good>played landmine. (C2 Q2-B; was `saveStats`.)
+      const eng=useGameEngine({label:'blitz',genDate,minY,maxY,useJulian,saveStats:true,timingOff:false}); // Blitz: timing always tracked
+      const {state,correct,overrideAvail:engOverrideAvail}=eng;
       // Android Back closes the Show-Codes panel of the ACTIVE mode (Q1). Gated on `visible` so only
       // the on-screen mode registers (the others are mounted-but-hidden); `eng` is the active engine
       // (for Deduction it's the current silo), so this is one line per mode. See components/useBackButton.
       useBackButton(visible&&state.calcOpen,()=>eng.showCodes(false),'codes');
       const S=state.stats;
       const {flash,setFlashWithTimeout}=useButtonFlash();   // green/red answer pulse
+
+      // A round a MISCLICK ended: the round is over (timerDone), the live question is a counted wrong,
+      // and the grid shows a wrong guess (NOT a deliberate Reveal / Show-Codes end, which leaves only
+      // the correct in green). Such a round is RESUMABLE via Override (Part A — credit + continue),
+      // and Override stays available to rescue it even when Save Stats is off (Part B). One source of
+      // truth for both the resume (onOverride) and the override-visibility gate.
+      const misclickEnded=timerDone&&state.countedWrong&&Object.values(state.persistBtns).some(v=>typeof v==='string'&&v.startsWith('wrong'));
+      // Save Stats off HIDES Override (the round's invisible) EXCEPT to rescue a misclick-ended round;
+      // Save Stats on shows it per the engine's own gating. (The engine always tracks, so the rescue
+      // credit is integrity-safe — see saveStats:true above.) (C2 Q2-B.)
+      const overrideAvail=(saveStats||misclickEnded)&&engOverrideAvail;
 
       // Per-config Best silos (mirrors App's getBlitzBk / getSuddenBk keys exactly).
       const blitzBk=`${allowMistakes?'m':'n'}${blitzSec}|${randomFormat?'random':dateFormat}|${leapChance}|${janFebChance}|${julianChance}|${minY}-${maxY}|${useJulian}`;
@@ -1133,9 +1195,9 @@ interface DedOpts {
       const begin=()=>{
         eng.resetStats();                       // fresh round (S→0, history clear, new date)
         currentRoundIdRef.current=nextRoundIdRef.current++;
-        // Snapshot the Best standing before this round (per the active config) — the rollback floor.
-        const pb=blitzBest[blitzBk],ps=suddenBest[suddenBk];
-        roundBestFallbackRef.current={score:pb?.score??0,streak:pb?.streak??0,sudden:ps?.score??0};
+        // Snapshot the FULL Best records standing before this round (per the active config) — the
+        // reconcile floor + the resume-revert target.
+        prevRoundBestRef.current={blitzBk,suddenBk,blitz:blitzBest[blitzBk],sudden:suddenBest[suddenBk]};
         setActive(true);setTimerDone(false);setShowTimerDate(false);
         const now=performance.now();
         if(!perQ){blitzStartRef.current=now;blitzPausedAccRef.current=0;blitzPausedAtRef.current=null;setBlitzRemain(blitzSec);blitzRemainRef.current=blitzSec;}
@@ -1155,18 +1217,44 @@ interface DedOpts {
           if(perQ||!allowMistakes){eng.lockReveal();endRound();}
         }
       };
+      // Resume a round that an Override just RESCUED. A misclick ended the round (the clock stopped,
+      // the Best was provisionally saved by the timerDone effect) and crediting that wrong via
+      // Override continues the round instead of leaving it dead. Two halves: (1) revert the Best to
+      // the pre-round records (it re-saves only when the round genuinely ends) + clear its ★; (2)
+      // restart the clock — Per Round continues the countdown WHERE IT STOPPED
+      // (blitzStart = now − elapsed, so the remaining time = blitzRemainRef), Per Question starts a
+      // fresh per-question timer on the (already-advanced) next date. Restores the pre-rewrite
+      // behavior the Blitz mode-untangle dropped (original 7176a50 did exactly this). (C2 Q2-A.)
+      const resumeRound=()=>{
+        const snap=prevRoundBestRef.current;
+        if(!perQ){
+          setBlitzBest(prev=>{const nx={...prev};if(snap.blitz)nx[snap.blitzBk]=snap.blitz;else delete nx[snap.blitzBk];return nx;});
+          setBlitzBestNew(p=>{if(!(snap.blitzBk in p))return p;const nx={...p};delete nx[snap.blitzBk];return nx;});
+        }else{
+          setSuddenBest(prev=>{const nx={...prev};if(snap.sudden)nx[snap.suddenBk]=snap.sudden;else delete nx[snap.suddenBk];return nx;});
+          setSuddenBestNew(p=>{if(!(snap.suddenBk in p))return p;const nx={...p};delete nx[snap.suddenBk];return nx;});
+        }
+        setActive(true);setTimerDone(false);setShowTimerDate(false);
+        const now=performance.now();
+        if(!perQ){blitzStartRef.current=now-(blitzSec-blitzRemainRef.current)*1000;blitzPausedAccRef.current=0;blitzPausedAtRef.current=null;}
+        else{qDeadlineRef.current=now+qSec*1000;qPausedAccRef.current=0;qPausedAtRef.current=null;setQRemain(qSec);}
+      };
       // Override-to-wrong is a mistake: flipping a CORRECT answer to wrong (a live first-try
       // reversal, or retro-flipping the most-recent correct history entry) ends the round when
       // Allow Mistakes is off (or Per Question) — exactly like a real wrong answer (bug #1).
       // Wrong→credit overrides (countedWrong / pendingWrongOverride) are corrections and never
       // end the round. Detect the to-wrong direction from the same fields the reducer reads.
       const onOverride=()=>{
+        // A misclick-ended round is RESUMABLE (see `misclickEnded` above): crediting that wrong via
+        // Override continues the round instead of leaving it dead. Captured BEFORE override mutates
+        // state. (C2 Q2-A.)
         let flipToWrong=false;
         if(state.canOverrideCorrect&&state.prevStatsSnapshot)flipToWrong=!state.prevStatsSnapshot.wasWrong;
         else if(eng.retroOverrideEligible){const last=state.stack[state.stack.length-1];flipToWrong=!!(last?.capsule?.snapshot&&!last.capsule.snapshot.wasWrong);}
         if(state.countedWrong)setFlashWithTimeout({type:"good",idx:correct});
-        eng.override(); // best reconciled by the timerDone effect
-        if(active&&flipToWrong&&(perQ||!allowMistakes))endRound();
+        eng.override(); // credit the wrong (Path 3); the round then resumes (rescue) or the timerDone effect reconciles
+        if(misclickEnded)resumeRound();
+        else if(active&&flipToWrong&&(perQ||!allowMistakes))endRound();
       };
       const onReveal=()=>{eng.reveal();endRound();};
       // Opening Show Codes during an active round ends the round (so Best Score is recorded and
@@ -1175,16 +1263,26 @@ interface DedOpts {
       const onShowCodes=(open: boolean)=>{eng.showCodes(open);if(open&&active)endRound();};
       const resetRound=()=>{eng.resetStats();setActive(false);setTimerDone(false);setShowTimerDate(false);stopRound();resetTimerBars();}; // App's arm (resets stats for blitz)
 
+      // Leaving the mode mid-round ABANDONS the round (the original App discarded an active round
+      // on switch-away; AoX resets a hidden running run and Flash stops a live flash the same way —
+      // this teardown was missed in the Blitz migration). Without it the hidden rAF countdown kept
+      // draining behind display:none: a per-question timeout would count a phantom MISS in absentia,
+      // and the round would end + reconcile a Best for play the user walked away from. The ended
+      // (timerDone) state DOES survive a detour, like AoX's done run. (C2 fix; pinned in blitz.dom.)
+      useEffect(()=>{if(!visible&&active)resetRound();/* eslint-disable-line react-hooks/exhaustive-deps */},[visible]);
+
       // Reconcile Best when a round is over: set to max(S) tagged with the round id, and roll
       // back when an Override has dropped the score of the round that set the Best. Runs on
       // S changes while timerDone (covers both round-end and post-round override).
       useEffect(()=>{
         if(!timerDone)return;
+        if(!saveStats)return;   // practice mode (Save Stats off): the round plays + tracks internally but records NO Best (C2 Q2-B — now that the engine always tracks, gate the Best here like AoX does)
         const rid=currentRoundIdRef.current;
         if(!perQ){
           setBlitzBest(prev=>{
             const cur=prev[blitzBk]??{score:0,streak:0,scoreRoundId:null,streakRoundId:null};
-            const next=reconcileBlitzBest(cur,S.good,S.best,rid,roundBestFallbackRef.current);
+            const fb=prevRoundBestRef.current;
+            const next=reconcileBlitzBest(cur,S.good,S.best,rid,{score:fb.blitz?.score??0,streak:fb.blitz?.streak??0});
             if(next.score===cur.score&&next.streak===cur.streak&&next.scoreRoundId===cur.scoreRoundId&&next.streakRoundId===cur.streakRoundId)return prev;
             const scoreUp=next.score>cur.score,streakUp=next.streak>cur.streak;
             if(scoreUp||streakUp)setBlitzBestNew(p=>{const e=p[blitzBk]||{score:false,streak:false};return{...p,[blitzBk]:{score:e.score||scoreUp,streak:e.streak||streakUp}};});
@@ -1193,13 +1291,13 @@ interface DedOpts {
         }else{
           setSuddenBest(prev=>{
             const cur=prev[suddenBk]??{score:0,roundId:null};
-            const next=reconcileSuddenBest(cur,S.good,rid,roundBestFallbackRef.current.sudden);
+            const next=reconcileSuddenBest(cur,S.good,rid,prevRoundBestRef.current.sudden?.score??0);
             if(next.score===cur.score&&next.roundId===cur.roundId)return prev;
             if(next.score>cur.score)setSuddenBestNew(p=>({...p,[suddenBk]:true}));
             return{...prev,[suddenBk]:next};
           });
         }
-      },[timerDone,S.good,S.best,perQ,blitzBk,suddenBk,setBlitzBest,setSuddenBest]);
+      },[timerDone,saveStats,S.good,S.best,perQ,blitzBk,suddenBk,setBlitzBest,setSuddenBest]);
 
       const togglePerQ=()=>{if(active||timerDone)return;setPerQ(v=>{const n=!v;if(n&&allowMistakes)setAllowMistakes(false);return n;});};
       const toggleAllowMistakes=()=>{if(active||timerDone)return;setAllowMistakes(v=>!v);};

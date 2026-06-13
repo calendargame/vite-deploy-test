@@ -333,8 +333,16 @@ const advance = (
   // nothing to retroactively credit — arming it would let Override Path 4 credit good+1 on a played
   // it never incremented (an over-credit / 1-0). Fix 2026-06-06 (tests: classic.dom "Save Stats /
   // Override availability"; surfaced by the all-modes score-integrity survey).
+  // AND only when the question still carries its correction capsule (prevStatsSnapshot) — the same
+  // eligibility gate the browse/retro flips use (Paths 1/5 via capsule.snapshot). A question whose
+  // credit was already overridden AWAY (a Path-2 reversal that stayed put — its snapshot is spent/
+  // null) must not re-arm: Path 4 would re-credit the very credit the first override removed, a
+  // flip-flop that defeats one-override-per-question while keeping good and hasCredit consistent
+  // (invisible to the strong oracle — caught by the independent reference model, C2 Session 6).
   const pendingWrongOverride: PendingWrongOverride | null =
-    state.countedWrong && !isDeductionQ && saved ? { wrongTime: state.wrongTime } : null
+    state.countedWrong && !isDeductionQ && saved && state.prevStatsSnapshot != null
+      ? { wrongTime: state.wrongTime }
+      : null
   return {
     ...state,
     questionId: state.questionId + 1,
@@ -642,11 +650,19 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     // (!active disables the grid). Distinct from LOCK_REVEAL (no stat) + REVEAL (countedWrong).
     case 'TIMEOUT_MISS': {
       const { useJulian, saveStats } = action
+      // A locked question is already resolved — a timeout on it must be a no-op, exactly like
+      // ANSWER's locked guard. Unreachable in the app (the round ends with the timeout), but the
+      // engine must not rely on the component to forbid an invalid move. (C2 Session-6 hardening,
+      // same class as the TIMEOUT_MISS lock fix.)
+      if (state.locked) return state
       const correct = correctIndexOf(state.date, useJulian)
       const effective = effectiveSaveStats(state, saveStats)
-      const stats = effective
-        ? { ...state.stats, played: state.stats.played + 1, streak: 0 }
-        : state.stats
+      // One played per question: a burned (countedWrong) question already took its increment at the
+      // wrong answer — the timeout still resolves it (locks + reveals) but must not re-count it.
+      const stats =
+        effective && !state.countedWrong
+          ? { ...state.stats, played: state.stats.played + 1, streak: 0 }
+          : state.stats
       return {
         ...state,
         saveStatsThisQ: effective,
@@ -742,69 +758,45 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         }
       }
 
-      // PATH 2 — live first-try-correct reversal (or a wrong-then-right reloaded via Back).
+      // PATH 2 — live first-try-correct reversal: flip the live correct to a miss. At the live edge
+      // (backDepth===0) canOverrideCorrect===true ALWAYS implies prevStatsSnapshot.wasWrong===false —
+      // a wrong / Reveal / Show Codes clears canOverrideCorrect in the same transition, and the only
+      // setter (a first-try correct) snapshots wasWrong:false — so this is only ever a correct→miss
+      // reversal. (A former `if (u.wasWrong)` credit branch here was provably unreachable + driven by
+      // no test — confirmed static + by a throw surviving a FUZZ_SCALE=30 sweep — and was removed
+      // 2026-06-13. The old comment's "wrong-then-right reloaded via Back" never reaches Path 2: a
+      // late-correct advances without arming canOverrideCorrect.)
       if (state.canOverrideCorrect && state.prevStatsSnapshot) {
         const u = state.prevStatsSnapshot
-        const times = state.stats.times.slice(0, u.timesLen)
-        let stats: Stats
-        if (u.wasWrong) {
-          if (state.wrongTime != null && tracking) times.push(state.wrongTime)
-          const streak = u.streak + 1
-          stats = {
-            ...state.stats,
-            played: u.played + 1,
-            good: u.good + 1,
-            streak,
-            best: Math.max(u.best, streak),
-            times,
-          }
-        } else {
-          // Reversing a live first-try-correct to a miss: drop THIS answer's credit RELATIVE to the
-          // live good (good-1) — NOT a restore to the snapshot's u.good, which is stale once a back-
-          // browse Path-1 credit raised good after the snapshot was taken: the restore wiped that
-          // credit from good while its history entry kept hasCredit=true, so a later streak/best
-          // recompute counted the phantom (best>good). Recompute streak/best from history with the
-          // now-miss live question (middle=false), mirroring Path 1/3/5; drop the solve time by value.
-          // played is unchanged (a miss is still a play). (C1 fuzz fix, 2026-06-07 — the Path-2 twin of
-          // the Path-4 stale-snapshot clobber the override-/reveal-heavy + deeper profiles surfaced.)
-          const cut = dropContributedTime([...state.stats.times], u.contributedTime)
-          const { curStreak, bestStreak } = streaksFromStacks(
-            state.stack,
-            state.forwardStack,
-            false,
-          )
-          stats = {
-            ...state.stats,
-            good: Math.max(0, state.stats.good - 1),
-            streak: curStreak,
-            best: bestStreak,
-            times: cut,
-          }
+        // Drop THIS answer's credit RELATIVE to the live good (good-1) — NOT a restore to the
+        // snapshot's u.good, which is stale once a back-browse Path-1 credit raised good after the
+        // snapshot was taken: the restore wiped that credit from good while its history entry kept
+        // hasCredit=true, so a later streak/best recompute counted the phantom (best>good). Recompute
+        // streak/best from history with the now-miss live question (middle=false), mirroring Path
+        // 1/3/5; drop the solve time by value. played is unchanged (a miss is still a play). (C1 fuzz
+        // fix, 2026-06-07 — the Path-2 twin of the Path-4 stale-snapshot clobber the override-/reveal-
+        // heavy + deeper profiles surfaced.)
+        const cut = dropContributedTime([...state.stats.times], u.contributedTime)
+        const { curStreak, bestStreak } = streaksFromStacks(state.stack, state.forwardStack, false)
+        const stats: Stats = {
+          ...state.stats,
+          good: Math.max(0, state.stats.good - 1),
+          streak: curStreak,
+          best: bestStreak,
+          times: cut,
         }
         let s: GameState = {
           ...s0,
           stats,
-          // A !wasWrong reversal flips the correct to a MISS → mark the grid 'override-wrong' so the
-          // history entry advance() builds isn't counted as a (false) credit (which a later Path-3/5
-          // streak recompute would otherwise inflate past good). wasWrong (a credit) keeps its
-          // markings + credits via the stack mod below. Mirrors Path 1's override-wrong. (C2 fuzz
+          // The reversal flips the correct to a MISS → mark the grid 'override-wrong' so the history
+          // entry advance() builds isn't counted as a (false) credit (which a later Path-3/5 streak
+          // recompute would otherwise inflate past good). Mirrors Path 1's override-wrong. (C2 fuzz
           // fix, 2026-06-06.)
-          persistBtns: u.wasWrong ? s0.persistBtns : oneBtn(correct, 'override-wrong'),
+          persistBtns: oneBtn(correct, 'override-wrong'),
           prevStatsSnapshot: null,
           wrongTime: null,
           canOverrideCorrect: false,
           countedWrong: true,
-        }
-        if (u.wasWrong && s.stack.length) {
-          const last = s.stack[s.stack.length - 1]
-          const wd = correctIndexOf(last, useJulian)
-          s = {
-            ...s,
-            stack: [
-              ...s.stack.slice(0, -1),
-              { ...last, btns: oneBtn(wd, 'correct'), overrideUsed: true },
-            ],
-          }
         }
         // `noAdvance` (AoX): reversing the completing solve fails the run (Allow Mistakes off) —
         // stay on the question instead of advancing, so the component can lock it as failed.

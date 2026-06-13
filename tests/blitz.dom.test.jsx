@@ -335,3 +335,172 @@ describe('Blitz — Best Score cross-round rollback (C2)', () => {
     expect(screen.getByText(/Best Score: 1\b/)).toBeInTheDocument()
   })
 })
+
+// ── C2 fix: leaving Blitz mid-round ABANDONS the round (the hidden countdown must not keep
+// draining). The original App discarded an active round on switch-away (blitzLeavingMidRound →
+// stacks unsaved, snap nulled, arm() on return); AoX resets a hidden running run and Flash stops a
+// live flash the same way — but the Blitz migration carried no visibility teardown, so the rAF
+// countdown kept running behind display:none: a per-question timeout would count a phantom MISS in
+// absentia, and the round would end + reconcile a Best for play the user walked away from. The
+// ENDED (timerDone) state still survives a detour, exactly like AoX's done run.
+describe('Blitz — C2 fix (mode switch mid-round abandons the round)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('switching away mid-round and back lands on a FRESH idle Blitz (round abandoned)', () => {
+    mountApp()
+    switchToBlitz()
+    begin()
+    click(correctName(readDate())) // round running, Score 1/1
+    expect(statValue('Score')).toBe('1/1')
+    act(() => {
+      fireEvent.keyDown(window, { key: 'K' }) // detour into Classic mid-round
+    })
+    act(() => {
+      vi.advanceTimersByTime(2000) // time passes while away — nothing may tick in the background
+    })
+    switchToBlitz()
+    expect(ctrl('Begin')).toBeInTheDocument() // back to idle — the round did not keep running
+    expect(statValue('Score')).toBe('0/0') // the abandoned round's ephemeral stats are gone
+  })
+
+  it('an ENDED round (timerDone) survives the same detour', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Allow Mistakes') // OFF → a wrong answer ends the round
+    begin()
+    click(wrongName(readDate())) // round over: 0/1, timerDone
+    expect(statValue('Score')).toBe('0/1')
+    act(() => {
+      fireEvent.keyDown(window, { key: 'K' })
+    })
+    switchToBlitz()
+    expect(statValue('Score')).toBe('0/1') // the finished round's summary is still there
+    expect(ctrl('Reset')).toBeInTheDocument()
+  })
+})
+
+// ── C2 Q2-A: a misclick-ended round is RESUMABLE via Override (regression fix). The pre-rewrite
+// app resumed the round when you overrode the mistake — Per Round continued the countdown where it
+// stopped, Per Question started a fresh per-question timer — and reverted the Best the interrupted
+// round had provisionally saved ("bests not save yet"). The Blitz mode-untangle dropped this: a
+// mistake ended the round, the Best saved, and Override credited the point but the round stayed
+// DEAD (a new date loaded that you couldn't play). Restored here.
+describe('Blitz — C2 Q2-A (Override resumes a misclick-ended round)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('Per Round (Allow Mistakes off): Override after a misclick credits it AND resumes the round', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Allow Mistakes') // OFF → a wrong ends the round
+    begin()
+    click(correctName(readDate())) // 1/1
+    click(wrongName(readDate())) // misclick → round ends 1/2
+    expect(statValue('Score')).toBe('1/2')
+    expect(screen.getByText(/Best Score: 1\b/)).toBeInTheDocument() // provisionally saved at the mistake
+    act(() => fireEvent.click(ctrl('Override'))) // credit the misclick + RESUME
+    expect(statValue('Score')).toBe('2/2') // credited
+    expect(screen.getByText(/Best Score: —/)).toBeInTheDocument() // Best reverted — not locked from the interrupted round
+    // The round is LIVE again: the next date is answerable (the bug left it dead → score would stay 2/2).
+    click(correctName(readDate()))
+    expect(statValue('Score')).toBe('3/3')
+    // Ending the round now (another misclick) re-saves the Best at the true final score.
+    click(wrongName(readDate()))
+    expect(statValue('Score')).toBe('3/4')
+    expect(screen.getByText(/Best Score: 3\b/)).toBeInTheDocument()
+  })
+
+  it('Per Question: Override after a sudden-death misclick resumes on a fresh question', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Per Round') // → Per Question (sudden death; Allow Mistakes forced off)
+    begin()
+    click(correctName(readDate())) // 1/1, next question
+    click(wrongName(readDate())) // sudden-death miss → round ends 1/2
+    expect(statValue('Score')).toBe('1/2')
+    expect(screen.getByText(/Best Score: 1\b/)).toBeInTheDocument()
+    act(() => fireEvent.click(ctrl('Override'))) // credit + resume
+    expect(statValue('Score')).toBe('2/2')
+    expect(screen.getByText(/Best Score: —/)).toBeInTheDocument() // reverted
+    click(correctName(readDate())) // live again on a fresh question → advances
+    expect(statValue('Score')).toBe('3/3')
+  })
+})
+
+// ── C2 Q2-B: in PRACTICE MODE (Save Stats off) a misclick-ended round is STILL rescuable via
+// Override (the off-gate used to hide Override entirely). Blitz now always-tracks internally — Save
+// Stats off only dims the display + records no Best — so the rescue credit stays integrity-safe.
+describe('Blitz — C2 Q2-B (Save Stats off: misclick rescue, no Best recorded)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    localStorage.clear()
+    useSettings.getState().resetSettings()
+    useSettings.getState().setRandomFormat(false)
+    useSettings.getState().setDateFormat('numeric-ymd')
+    useSettings.getState().setMinY(1583)
+    useSettings.getState().setMaxY(10000)
+    useSettings.getState().setSaveStats(false) // practice mode
+  })
+  afterEach(() => {
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+    useSettings.getState().setSaveStats(true)
+    cleanup()
+    document.getElementById('root')?.remove()
+  })
+
+  it('Per Round: Override is available to rescue a misclick-ended round, and no Best is recorded', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Allow Mistakes') // off → a wrong ends the round
+    begin()
+    click(correctName(readDate())) // internally tracked; display dimmed
+    click(wrongName(readDate())) // misclick → round ends
+    // Practice mode: Best stays unrecorded, but Override IS available to rescue (the off-gate fix).
+    expect(screen.getByText(/Best Score: —/)).toBeInTheDocument()
+    expect(isDisabled(ctrl('Override'))).toBe(false)
+    act(() => fireEvent.click(ctrl('Override'))) // credit + resume
+    expect(screen.getByText(/Best Score: —/)).toBeInTheDocument() // still no Best
+    // The round resumed: the next date is answerable.
+    const d2 = readDate()
+    click(correctName(d2))
+    expect(ctrl('Reset')).toBeInTheDocument() // still live
+  })
+
+  it('Save Stats off records NO Best even when a round ends normally (always-track is display-only)', () => {
+    mountApp()
+    switchToBlitz()
+    clickText('Allow Mistakes') // off
+    begin()
+    click(correctName(readDate())) // a correct
+    click(wrongName(readDate())) // wrong → round ends with an internal score, but Save Stats off
+    expect(screen.getByText(/Best Score: —/)).toBeInTheDocument() // no Best in practice mode
+  })
+})

@@ -173,4 +173,36 @@ describe('fuzz / bug survey — engine invariants hold across random play (C1/C2
     },
     T,
   )
+
+  // ── The fully-INDEPENDENT reference model (C2 Part 3) ──
+  // A second, separately-written implementation of the scoring contract (referenceModel.js) runs in
+  // lockstep and is compared field-by-field after EVERY action — played/good/times/best + clean-edge
+  // streak. Unlike the strong oracle (which reconstructs good from the reducer's own hasCredit
+  // flags), the model derives what SHOULD be credited from the user-visible rules alone, so a state
+  // where the aggregate AND the flags are wrong together still disagrees here. `played` gets its
+  // first exact oracle anywhere.
+  it(
+    'ref-classic — the reducer matches the independent reference model (Classic/Deduction surface)',
+    () => {
+      const cov = runFuzzProfile('ref-classic')
+      expect(cov.refChecks).toBeGreaterThan(0) // the model actually ran
+      expect(cov.override).toBeGreaterThan(0)
+      expect(cov.overrideBrowsing).toBeGreaterThan(0)
+      expect(cov.deduction).toBeGreaterThan(0)
+      expect(cov.good).toBeGreaterThan(0)
+    },
+    T,
+  )
+  it(
+    'ref-full — the reducer matches the independent reference model (held-complete + timeout surface)',
+    () => {
+      const cov = runFuzzProfile('ref-full')
+      expect(cov.refChecks).toBeGreaterThan(0)
+      expect(cov.complete).toBeGreaterThan(0) // actually held completing solves
+      expect(cov.noAdvance).toBeGreaterThan(0) // actually reversed one (Path 2 noAdvance)
+      expect(cov.timedTimeout).toBeGreaterThan(0) // actually fired the timeout actions
+      expect(cov.override).toBeGreaterThan(0)
+    },
+    T,
+  )
 })
